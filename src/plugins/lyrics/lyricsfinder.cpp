@@ -65,6 +65,16 @@ LyricsFinder::LyricsFinder(std::shared_ptr<NetworkAccessManager> networkManager,
     restoreState();
 }
 
+void LyricsFinder::setAudioLoader(std::shared_ptr<AudioLoader> audioLoader)
+{
+    for(auto* source : m_sources) {
+        if(auto* tagSource = qobject_cast<TagLyrics*>(source)) {
+            tagSource->setAudioLoader(std::move(audioLoader));
+            return;
+        }
+    }
+}
+
 void LyricsFinder::cancel()
 {
     ++m_searchGeneration;

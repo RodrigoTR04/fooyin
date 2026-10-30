@@ -26,6 +26,7 @@
 #include <core/scripting/scriptparser.h>
 
 namespace Fooyin {
+class AudioLoader;
 class Track;
 
 namespace Lyrics {
@@ -50,6 +51,9 @@ class LyricsFinder : public QObject
 public:
     explicit LyricsFinder(std::shared_ptr<NetworkAccessManager> networkManager, SettingsManager* settings,
                           QObject* parent = nullptr);
+
+    //! Allows tag lyrics to be read from files which have changed since they were last indexed
+    void setAudioLoader(std::shared_ptr<AudioLoader> audioLoader);
 
     void cancel();
 
