@@ -299,7 +299,7 @@ void LyricsFinder::advanceSearch()
     if(!m_externalPhaseStarted) {
         m_externalPhaseStarted = true;
 
-        const bool skipChecked = m_request.automatic && m_history && m_history->contains(historyKey());
+        const bool skipChecked = m_request.automatic && m_history && history()->contains(historyKey());
 
         if(skipChecked || (m_request.skipExternalAfterLocalResults && foundLocalResults())) {
             for(auto& search : m_searches) {
@@ -481,16 +481,24 @@ bool LyricsFinder::foundLocalResults() const
 
 QString LyricsFinder::historyKey() const
 {
-    // Changing the track's details, the match threshold or the enabled external sources makes a previous result invalid
-    QStringList parts{m_params.track.uniqueFilepath(), m_params.title, m_params.artist, m_params.album,
-                      QString::number(m_settings->fileValue(Settings::MatchThreshold, 75).toInt())};
+    // Changing the track's details makes a previous result invalid
+    const QStringList parts{m_params.track.uniqueFilepath(), m_params.title, m_params.artist, m_params.album};
+
+    return QString::fromLatin1(QCryptographicHash::hash(parts.join(u'\n').toUtf8(), QCryptographicHash::Sha1).toHex());
+}
+
+LyricsSearchHistory* LyricsFinder::history() const
+{
+    // Changing the match threshold or the enabled external sources makes all previous results invalid
+    QStringList context{QString::number(m_settings->fileValue(Settings::MatchThreshold, 75).toInt())};
     for(const auto* source : m_sources) {
         if(!source->isLocal() && source->enabled()) {
-            parts.append(source->name());
+            context.append(source->name());
         }
     }
 
-    return QString::fromLatin1(QCryptographicHash::hash(parts.join(u'\n').toUtf8(), QCryptographicHash::Sha1).toHex());
+    m_history->setContext(context.join(u'|'));
+    return m_history.get();
 }
 
 void LyricsFinder::recordSearchHistory()
@@ -500,10 +508,10 @@ void LyricsFinder::recordSearchHistory()
     }
 
     if(m_foundAnyResults) {
-        m_history->remove(historyKey());
+        history()->remove(historyKey());
     }
     else if(m_externalSearched && !m_externalFailed) {
-        m_history->add(historyKey());
+        history()->add(historyKey());
     }
 }
 } // namespace Fooyin::Lyrics

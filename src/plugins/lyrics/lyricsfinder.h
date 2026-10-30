@@ -106,6 +106,7 @@ private:
     [[nodiscard]] bool localSearchComplete() const;
     [[nodiscard]] bool foundLocalResults() const;
     [[nodiscard]] QString historyKey() const;
+    [[nodiscard]] LyricsSearchHistory* history() const;
     void recordSearchHistory();
 
     std::shared_ptr<NetworkAccessManager> m_networkManager;

@@ -47,6 +47,18 @@ QString LyricsSearchHistory::defaultPath()
     return QDir::cleanPath(Utils::sharePath().append("/lyrics-unavailable"_L1));
 }
 
+void LyricsSearchHistory::setContext(const QString& context)
+{
+    if(context == m_context) {
+        return;
+    }
+
+    m_context = context;
+    m_keys.clear();
+    m_order.clear();
+    rewrite();
+}
+
 bool LyricsSearchHistory::contains(const QString& key) const
 {
     return m_keys.contains(key);
@@ -63,6 +75,11 @@ void LyricsSearchHistory::add(const QString& key)
 
     if(m_order.size() > MaxEntries) {
         m_keys.remove(m_order.takeFirst());
+        rewrite();
+        return;
+    }
+
+    if(!QFile::exists(m_filepath)) {
         rewrite();
         return;
     }
@@ -97,7 +114,10 @@ void LyricsSearchHistory::load()
 
     while(!file.atEnd()) {
         const QString key = QString::fromUtf8(file.readLine()).trimmed();
-        if(!key.isEmpty() && !m_keys.contains(key)) {
+        if(key.startsWith(u'#')) {
+            m_context = key.sliced(1);
+        }
+        else if(!key.isEmpty() && !m_keys.contains(key)) {
             m_keys.insert(key);
             m_order.push_back(key);
         }
@@ -115,6 +135,7 @@ void LyricsSearchHistory::rewrite() const
         return;
     }
 
+    file.write('#' + m_context.toUtf8() + '\n');
     for(const QString& key : m_order) {
         file.write(key.toUtf8() + '\n');
     }

@@ -31,6 +31,7 @@ namespace Fooyin::Lyrics {
  * automatic searches don't repeat the same failed lookups every time the track is played.
  * Entries are keyed by an opaque string and persisted across sessions. The oldest entries are dropped once the
  * history grows beyond a fixed size.
+ * Entries are only valid for the context (search settings) they were recorded with; changing it clears the history.
  */
 class LyricsSearchHistory
 {
@@ -39,6 +40,9 @@ public:
 
     //! History shared by all finders, so a search anywhere is known everywhere
     static std::shared_ptr<LyricsSearchHistory> shared();
+
+    //! Clears the history if the context differs from the one the entries were recorded with
+    void setContext(const QString& context);
 
     [[nodiscard]] bool contains(const QString& key) const;
     void add(const QString& key);
@@ -53,6 +57,7 @@ private:
     void rewrite() const;
 
     QString m_filepath;
+    QString m_context;
     QStringList m_order; // Oldest first
     QSet<QString> m_keys;
 };
