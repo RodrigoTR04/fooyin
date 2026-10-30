@@ -75,6 +75,9 @@ public:
     void setIndex(int index);
     void setEnabled(bool enabled);
 
+    //! Returns true (and resets) if a search failed due to a network or server error rather than finding nothing
+    bool takeFailed();
+
 Q_SIGNALS:
     void searchResult(const std::vector<Fooyin::Lyrics::LyricData>& data);
 
@@ -85,6 +88,7 @@ protected:
     static QString toUtf8(QIODevice* file);
     static QString encode(const QString& str);
 
+    void noteReplyError(const QNetworkReply* reply);
     bool getJsonFromReply(QNetworkReply* reply, QJsonObject* obj);
     bool extractJsonObj(const QByteArray& data, QJsonObject* obj);
 
@@ -97,6 +101,7 @@ private:
     SettingsManager* m_settings;
     int m_index;
     bool m_enabled;
+    bool m_failed{false};
     QPointer<QNetworkReply> m_reply;
 };
 } // namespace Lyrics

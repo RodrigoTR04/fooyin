@@ -27,6 +27,8 @@
 #include <QJsonParseError>
 #include <QNetworkReply>
 
+#include <utility>
+
 Q_LOGGING_CATEGORY(LYRICS, "fy.lyrics")
 
 using namespace Qt::StringLiterals;
@@ -80,6 +82,11 @@ void LyricSource::setEnabled(bool enabled)
     m_enabled = enabled;
 }
 
+bool LyricSource::takeFailed()
+{
+    return std::exchange(m_failed, false);
+}
+
 NetworkAccessManager* LyricSource::network() const
 {
     return m_network;
@@ -100,9 +107,21 @@ QString LyricSource::encode(const QString& str)
     return QString::fromLatin1(QUrl::toPercentEncoding(str));
 }
 
+void LyricSource::noteReplyError(const QNetworkReply* reply)
+{
+    // Content errors (e.g. 404) mean the source has no lyrics, anything else (connection, protocol, server) is a
+    // failure
+    const auto error = reply->error();
+    if(error != QNetworkReply::NoError && (error < 200 || error >= 300)) {
+        m_failed = true;
+    }
+}
+
 bool LyricSource::getJsonFromReply(QNetworkReply* reply, QJsonObject* obj)
 {
     bool success{false};
+
+    noteReplyError(reply);
 
     if(reply->error() == QNetworkReply::NoError) {
         if(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200) {
