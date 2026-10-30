@@ -57,6 +57,7 @@ LyricsFinder::LyricsFinder(std::shared_ptr<NetworkAccessManager> networkManager,
     : QObject{parent}
     , m_networkManager{std::move(networkManager)}
     , m_settings{settings}
+    , m_history{LyricsSearchHistory::shared()}
     , m_externalSearched{false}
     , m_externalFailed{false}
     , m_foundAnyResults{false}
@@ -78,11 +79,6 @@ void LyricsFinder::setAudioLoader(std::shared_ptr<AudioLoader> audioLoader)
             return;
         }
     }
-}
-
-void LyricsFinder::setSearchHistory(std::shared_ptr<LyricsSearchHistory> history)
-{
-    m_history = std::move(history);
 }
 
 void LyricsFinder::cancel()
@@ -485,8 +481,9 @@ bool LyricsFinder::foundLocalResults() const
 
 QString LyricsFinder::historyKey() const
 {
-    // Changing the track's details or the enabled external sources makes a previous result invalid
-    QStringList parts{m_params.track.uniqueFilepath(), m_params.title, m_params.artist, m_params.album};
+    // Changing the track's details, the match threshold or the enabled external sources makes a previous result invalid
+    QStringList parts{m_params.track.uniqueFilepath(), m_params.title, m_params.artist, m_params.album,
+                      QString::number(m_settings->fileValue(Settings::MatchThreshold, 75).toInt())};
     for(const auto* source : m_sources) {
         if(!source->isLocal() && source->enabled()) {
             parts.append(source->name());

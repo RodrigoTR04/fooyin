@@ -58,9 +58,6 @@ public:
     //! Allows tag lyrics to be read from files which have changed since they were last indexed
     void setAudioLoader(std::shared_ptr<AudioLoader> audioLoader);
 
-    //! Allows automatic searches to avoid repeating external searches which previously found nothing
-    void setSearchHistory(std::shared_ptr<LyricsSearchHistory> history);
-
     void cancel();
 
     void findLyrics(const LyricsSearchRequest& request);

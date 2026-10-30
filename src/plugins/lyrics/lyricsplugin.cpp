@@ -25,7 +25,6 @@
 #include "lyricspropertiestab.h"
 #include "lyricssaver.h"
 #include "lyricssearchdialog.h"
-#include "lyricssearchhistory.h"
 #include "lyricswidget.h"
 #include "settings/lyricssavingpage.h"
 #include "settings/lyricssearchingpage.h"
@@ -63,7 +62,6 @@ void LyricsPlugin::initialise(const CorePluginContext& context)
     m_lyricsSettings = std::make_unique<LyricsSettings>();
     m_lyricsFinder   = new LyricsFinder(context.networkAccess, m_settings, this);
     m_lyricsFinder->setAudioLoader(m_audioLoader);
-    m_lyricsFinder->setSearchHistory(std::make_shared<LyricsSearchHistory>(LyricsSearchHistory::defaultPath()));
     m_lyricsSaver = new LyricsSaver(context.library, m_settings, this);
 
     m_lyricsService = new LyricsPlaybackService(context, m_lyricsFinder, m_lyricsSaver, this);

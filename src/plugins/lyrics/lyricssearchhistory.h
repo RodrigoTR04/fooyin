@@ -21,21 +21,29 @@
 
 #include <QSet>
 #include <QString>
+#include <QStringList>
+
+#include <memory>
 
 namespace Fooyin::Lyrics {
 /*!
  * Remembers which tracks have already been searched for on external sources without finding any lyrics, so that
  * automatic searches don't repeat the same failed lookups every time the track is played.
- * Entries are keyed by an opaque string and persisted across sessions.
+ * Entries are keyed by an opaque string and persisted across sessions. The oldest entries are dropped once the
+ * history grows beyond a fixed size.
  */
 class LyricsSearchHistory
 {
 public:
     explicit LyricsSearchHistory(QString filepath);
 
+    //! History shared by all finders, so a search anywhere is known everywhere
+    static std::shared_ptr<LyricsSearchHistory> shared();
+
     [[nodiscard]] bool contains(const QString& key) const;
     void add(const QString& key);
     void remove(const QString& key);
+    void clear();
 
     //! Default location of the history file
     static QString defaultPath();
@@ -45,6 +53,7 @@ private:
     void rewrite() const;
 
     QString m_filepath;
+    QStringList m_order; // Oldest first
     QSet<QString> m_keys;
 };
 } // namespace Fooyin::Lyrics

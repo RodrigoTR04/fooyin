@@ -31,9 +31,8 @@
 using namespace Qt::StringLiterals;
 
 namespace {
-std::vector<Fooyin::Lyrics::LyricData> lyricsFromTags(const Fooyin::Track& track,
-                                                      const Fooyin::Lyrics::SearchParams& params,
-                                                      const QStringList& searchTags)
+std::vector<Fooyin::Lyrics::LyricData>
+lyricsFromTags(const Fooyin::Track& track, const Fooyin::Lyrics::SearchParams& params, const QStringList& searchTags)
 {
     std::vector<Fooyin::Lyrics::LyricData> data;
 
@@ -55,7 +54,8 @@ std::vector<Fooyin::Lyrics::LyricData> lyricsFromTags(const Fooyin::Track& track
 }
 
 // The stored tags of a track are only as recent as the last time it was indexed, so lyrics embedded
-// in the file since then would otherwise be missed and the (much slower) external sources searched instead
+// in the file since then would otherwise be missed and the (much slower) external sources searched instead.
+// Tracks with no stored modification time are always read, as there is nothing to tell if they are current.
 bool fileChangedSinceIndexed(const Fooyin::Track& track)
 {
     if(track.isRemote() || track.isInArchive() || track.hasCue()) {

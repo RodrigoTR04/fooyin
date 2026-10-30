@@ -27,11 +27,19 @@
 
 using namespace Qt::StringLiterals;
 
+constexpr auto MaxEntries = 50000;
+
 namespace Fooyin::Lyrics {
 LyricsSearchHistory::LyricsSearchHistory(QString filepath)
     : m_filepath{std::move(filepath)}
 {
     load();
+}
+
+std::shared_ptr<LyricsSearchHistory> LyricsSearchHistory::shared()
+{
+    static const auto history = std::make_shared<LyricsSearchHistory>(defaultPath());
+    return history;
 }
 
 QString LyricsSearchHistory::defaultPath()
@@ -51,6 +59,13 @@ void LyricsSearchHistory::add(const QString& key)
     }
 
     m_keys.insert(key);
+    m_order.push_back(key);
+
+    if(m_order.size() > MaxEntries) {
+        m_keys.remove(m_order.takeFirst());
+        rewrite();
+        return;
+    }
 
     QFile file{m_filepath};
     if(file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
@@ -61,8 +76,16 @@ void LyricsSearchHistory::add(const QString& key)
 void LyricsSearchHistory::remove(const QString& key)
 {
     if(m_keys.remove(key)) {
+        m_order.removeOne(key);
         rewrite();
     }
+}
+
+void LyricsSearchHistory::clear()
+{
+    m_keys.clear();
+    m_order.clear();
+    rewrite();
 }
 
 void LyricsSearchHistory::load()
@@ -74,9 +97,14 @@ void LyricsSearchHistory::load()
 
     while(!file.atEnd()) {
         const QString key = QString::fromUtf8(file.readLine()).trimmed();
-        if(!key.isEmpty()) {
+        if(!key.isEmpty() && !m_keys.contains(key)) {
             m_keys.insert(key);
+            m_order.push_back(key);
         }
+    }
+
+    while(m_order.size() > MaxEntries) {
+        m_keys.remove(m_order.takeFirst());
     }
 }
 
@@ -87,7 +115,7 @@ void LyricsSearchHistory::rewrite() const
         return;
     }
 
-    for(const QString& key : m_keys) {
+    for(const QString& key : m_order) {
         file.write(key.toUtf8() + '\n');
     }
     file.commit();
