@@ -22,6 +22,8 @@
 #include <gui/widgets/expandedtreeview.h>
 
 #include <QBasicTimer>
+#include <QPointer>
+#include <QVariantAnimation>
 
 #include <unordered_map>
 #include <vector>
@@ -77,6 +79,13 @@ struct ExpandedTreeViewItem
     }
 };
 
+struct ViewportAnchor
+{
+    QPersistentModelIndex index;
+    int top{0};
+    bool expansion{false};
+};
+
 class ExpandedTreeViewPrivate : public QObject
 {
     Q_OBJECT
@@ -100,7 +109,9 @@ public:
     void doDelayedItemsLayout(int delay = 0) const;
     void interruptDelayedItemsLayout() const;
     void layoutItems() const;
+    void doItemsLayout(bool reuseIconMeasurements);
 
+    ViewportAnchor viewportAnchor() const;
     ExpandedTreeViewItem indexToListViewItem(const QModelIndex& index) const;
 
     int viewIndex(const QModelIndex& index) const;
@@ -129,6 +140,12 @@ public:
     std::vector<std::pair<int, int>> columnRanges(const QModelIndex& topIndex, const QModelIndex& bottomIndex) const;
     std::vector<QRect> rectsToPaint(const QModelIndex& index, const QStyleOptionViewItem& option, int y) const;
 
+    void updateExpansionGeometry();
+    void updateExpansionAnimation(const QVariant& value);
+    QPixmap captureExpansion() const;
+    [[nodiscard]] const QPixmap& animationSnapshot() const;
+    void stopExpansionAnimation();
+
     QPoint offset() const;
     bool isIndexValid(const QModelIndex& index) const;
 
@@ -143,6 +160,11 @@ public:
 
     ViewMode m_viewMode{ViewMode::Tree};
     CaptionDisplay m_captionDisplay{CaptionDisplay::Bottom};
+    int m_flowColumnGap{16};
+    int m_flowMinimumRows{1};
+    int m_flowMaximumColumns{0};
+    int m_flowMinimumColumnWidth{0};
+    bool m_flowStretchColumns{true};
     int m_iconItemColumn{-1};
     int m_iconHorizontalGap{-1};
     int m_iconVerticalGap{10};
@@ -156,6 +178,7 @@ public:
     bool m_updatingGeometry{false};
     int m_hidingScrollbar{0};
     bool m_layingOutItems{false};
+    bool m_preserveLayoutPosition{false};
 
     mutable std::vector<ExpandedTreeViewItem> m_viewItems;
     std::unordered_map<QModelIndex, int, ModelIndexHash> m_viewIndexes;
@@ -173,6 +196,18 @@ public:
     bool m_canStartDrag{true};
     QPersistentModelIndex m_hoverIndex;
     QPoint m_dragPos;
+    QPointer<QWidget> m_expansionWidget;
+    QPersistentModelIndex m_expandedIndex;
+    QRect m_expansionRect;
+    bool m_expansionAnimated{true};
+    QVariantAnimation m_expansionAnimation;
+    QPersistentModelIndex m_expansionAnimationIndex;
+    QPersistentModelIndex m_expansionAnimationNextIndex;
+    QPixmap m_expansionSnapshot;
+    QPixmap m_expansionPreviousSnapshot;
+    QSize m_expansionAnimationViewSize;
+    int m_expansionAnimationHeight{-1};
+    int m_expansionAnimationScrollMax{0};
     QRect m_dropIndicatorRect;
     ExpandedTreeView::DropIndicatorPosition m_dropIndicatorPos{ExpandedTreeView::OnViewport};
 
