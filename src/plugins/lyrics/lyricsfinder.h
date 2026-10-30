@@ -30,6 +30,7 @@ class AudioLoader;
 class Track;
 
 namespace Lyrics {
+class LyricsSearchHistory;
 struct Lyrics;
 
 struct LyricsSearchRequest
@@ -42,6 +43,8 @@ struct LyricsSearchRequest
     bool tagOnly{false};
     bool stopOnFirstResult{false};
     bool skipExternalAfterLocalResults{false};
+    //! Automatic search: external sources are never used if local lyrics exist or the track was already checked
+    bool automatic{false};
 };
 
 class LyricsFinder : public QObject
@@ -55,10 +58,13 @@ public:
     //! Allows tag lyrics to be read from files which have changed since they were last indexed
     void setAudioLoader(std::shared_ptr<AudioLoader> audioLoader);
 
+    //! Allows automatic searches to avoid repeating external searches which previously found nothing
+    void setSearchHistory(std::shared_ptr<LyricsSearchHistory> history);
+
     void cancel();
 
     void findLyrics(const LyricsSearchRequest& request);
-    void findLyrics(const Track& track);
+    void findLyrics(const Track& track, bool automatic = false);
     void findLocalLyrics(const Track& track);
     void findTagLyrics(const Track& track);
 
@@ -102,6 +108,8 @@ private:
     [[nodiscard]] std::vector<Lyrics> validatedResults(LyricSource* source, const std::vector<LyricData>& data) const;
     [[nodiscard]] bool localSearchComplete() const;
     [[nodiscard]] bool foundLocalResults() const;
+    [[nodiscard]] QString historyKey() const;
+    void recordSearchHistory();
 
     std::shared_ptr<NetworkAccessManager> m_networkManager;
     SettingsManager* m_settings;
@@ -112,6 +120,9 @@ private:
     SearchParams m_params;
     LyricsSearchRequest m_request;
     std::vector<SourceSearch> m_searches;
+    std::shared_ptr<LyricsSearchHistory> m_history;
+    bool m_externalSearched;
+    bool m_externalFailed;
     bool m_foundAnyResults;
     bool m_externalPhaseStarted;
     bool m_searchFinished;

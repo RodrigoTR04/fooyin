@@ -31,6 +31,8 @@ create_fooyin_plugin_internal(
         lyricssaver.h
         lyricssearchdialog.cpp
         lyricssearchdialog.h
+        lyricssearchhistory.cpp
+        lyricssearchhistory.h
         lyricssearchmodel.cpp
         lyricssearchmodel.h
         lyricsview.cpp
