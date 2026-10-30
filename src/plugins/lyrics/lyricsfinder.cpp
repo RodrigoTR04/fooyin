@@ -299,7 +299,7 @@ void LyricsFinder::advanceSearch()
     if(!m_externalPhaseStarted) {
         m_externalPhaseStarted = true;
 
-        const bool skipChecked = m_request.automatic && m_history && history()->contains(historyKey());
+        const bool skipChecked = m_request.automatic && m_history && syncedHistory()->contains(historyKey());
 
         if(skipChecked || (m_request.skipExternalAfterLocalResults && foundLocalResults())) {
             for(auto& search : m_searches) {
@@ -487,17 +487,20 @@ QString LyricsFinder::historyKey() const
     return QString::fromLatin1(QCryptographicHash::hash(parts.join(u'\n').toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
-LyricsSearchHistory* LyricsFinder::history() const
+LyricsSearchHistory* LyricsFinder::syncedHistory() const
 {
-    // Changing the match threshold or the enabled external sources makes all previous results invalid
-    QStringList context{QString::number(m_settings->fileValue(Settings::MatchThreshold, 75).toInt())};
+    // Changing the match threshold or the enabled external sources makes all previous results invalid.
+    // Source order doesn't affect whether anything is found, so it is left out.
+    QStringList sources;
     for(const auto* source : m_sources) {
         if(!source->isLocal() && source->enabled()) {
-            context.append(source->name());
+            sources.append(source->name());
         }
     }
+    sources.sort();
 
-    m_history->setContext(context.join(u'|'));
+    const int threshold = m_settings->fileValue(Settings::MatchThreshold, 75).toInt();
+    m_history->setContext(QString::number(threshold) + u'|' + sources.join(u'|'));
     return m_history.get();
 }
 
@@ -508,10 +511,10 @@ void LyricsFinder::recordSearchHistory()
     }
 
     if(m_foundAnyResults) {
-        history()->remove(historyKey());
+        syncedHistory()->remove(historyKey());
     }
     else if(m_externalSearched && !m_externalFailed) {
-        history()->add(historyKey());
+        syncedHistory()->add(historyKey());
     }
 }
 } // namespace Fooyin::Lyrics
