@@ -192,7 +192,7 @@ void LyricsPlaybackService::findLyrics(bool automatic)
     const QString skip = m_settings->fileValue(Settings::AutoSearchSkip, Defaults::autoSearchSkipScript()).toString();
     if(automatic && m_settings->fileValue(Settings::AutoSearch, false).toBool()
        && m_parser.evaluate(skip, m_track).isEmpty()) {
-        m_finder->findLyrics(m_track);
+        m_finder->findLyrics(m_track, true);
     }
     else {
         m_finder->findLocalLyrics(m_track);

@@ -87,6 +87,7 @@ void DarkLyrics::search(const SearchParams& params)
 void DarkLyrics::handleLyricReply()
 {
     if(reply()->error() != QNetworkReply::NoError) {
+        noteReplyError(reply());
         Q_EMIT searchResult({});
         resetReply();
         return;

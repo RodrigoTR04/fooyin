@@ -21,6 +21,7 @@
 
 #include "lyrics.h"
 #include "lyricsparser.h"
+#include "lyricssearchhistory.h"
 #include "settings/lyricssettings.h"
 #include "sources/darklyrics.h"
 #include "sources/kugoulyrics.h"
@@ -35,6 +36,8 @@
 #include <utils/helpers.h>
 #include <utils/settings/settingsmanager.h>
 #include <utils/stringutils.h>
+
+#include <QCryptographicHash>
 
 using namespace Qt::StringLiterals;
 
@@ -54,6 +57,9 @@ LyricsFinder::LyricsFinder(std::shared_ptr<NetworkAccessManager> networkManager,
     : QObject{parent}
     , m_networkManager{std::move(networkManager)}
     , m_settings{settings}
+    , m_history{LyricsSearchHistory::shared()}
+    , m_externalSearched{false}
+    , m_externalFailed{false}
     , m_foundAnyResults{false}
     , m_externalPhaseStarted{false}
     , m_searchFinished{true}
@@ -63,6 +69,16 @@ LyricsFinder::LyricsFinder(std::shared_ptr<NetworkAccessManager> networkManager,
 {
     loadDefaults();
     restoreState();
+}
+
+void LyricsFinder::setAudioLoader(std::shared_ptr<AudioLoader> audioLoader)
+{
+    for(auto* source : m_sources) {
+        if(auto* tagSource = qobject_cast<TagLyrics*>(source)) {
+            tagSource->setAudioLoader(std::move(audioLoader));
+            return;
+        }
+    }
 }
 
 void LyricsFinder::cancel()
@@ -95,7 +111,7 @@ void LyricsFinder::findLyrics(const LyricsSearchRequest& request)
         Qt::QueuedConnection);
 }
 
-void LyricsFinder::findLyrics(const Track& track)
+void LyricsFinder::findLyrics(const Track& track, bool automatic)
 {
     findLyrics(
         {.track     = track,
@@ -105,7 +121,8 @@ void LyricsFinder::findLyrics(const Track& track)
          .localOnly = false,
          .tagOnly   = false,
          .stopOnFirstResult             = m_settings->fileValue(Settings::SkipRemaining, true).toBool(),
-         .skipExternalAfterLocalResults = m_settings->fileValue(Settings::SkipExternal, true).toBool()});
+         .skipExternalAfterLocalResults = automatic || m_settings->fileValue(Settings::SkipExternal, true).toBool(),
+         .automatic                     = automatic});
 }
 
 void LyricsFinder::findLocalLyrics(const Track& track)
@@ -212,6 +229,7 @@ void LyricsFinder::startLyricsSearch(const Track& track)
     for(const auto& source : m_sources) {
         QObject::disconnect(source, nullptr, this, nullptr);
         source->cancel();
+        source->takeFailed();
     }
 
     m_params = {.track = track, .title = m_request.title, .album = m_request.album, .artist = m_request.artist};
@@ -226,6 +244,8 @@ void LyricsFinder::startLyricsSearch(const Track& track)
     }
 
     m_foundAnyResults      = false;
+    m_externalSearched     = false;
+    m_externalFailed       = false;
     m_externalPhaseStarted = false;
     m_searchFinished       = false;
     m_nextResultIndex      = 0;
@@ -244,6 +264,10 @@ void LyricsFinder::startSources(bool local)
             search.status = SearchStatus::Pending;
             sources.push_back(search.source);
         }
+    }
+
+    if(!local && !sources.empty()) {
+        m_externalSearched = true;
     }
 
     const uint64_t generation = m_searchGeneration;
@@ -275,7 +299,9 @@ void LyricsFinder::advanceSearch()
     if(!m_externalPhaseStarted) {
         m_externalPhaseStarted = true;
 
-        if(m_request.skipExternalAfterLocalResults && foundLocalResults()) {
+        const bool skipChecked = m_request.automatic && m_history && syncedHistory()->contains(historyKey());
+
+        if(skipChecked || (m_request.skipExternalAfterLocalResults && foundLocalResults())) {
             for(auto& search : m_searches) {
                 if(!search.source->isLocal() && search.status == SearchStatus::NotStarted) {
                     search.status = SearchStatus::Skipped;
@@ -340,6 +366,7 @@ void LyricsFinder::finishSearch()
     }
 
     m_searchFinished = true;
+    recordSearchHistory();
     Q_EMIT lyricsSearchFinished(m_params.track, m_foundAnyResults);
 }
 
@@ -363,6 +390,10 @@ void LyricsFinder::onSearchResult(LyricSource* source, const std::vector<LyricDa
         = std::ranges::find(m_searches, source, [](const SourceSearch& search) { return search.source; });
     if(searchIt == m_searches.end() || searchIt->status != SearchStatus::Pending) {
         return;
+    }
+
+    if(source->takeFailed() && !source->isLocal()) {
+        m_externalFailed = true;
     }
 
     searchIt->results = validatedResults(source, data);
@@ -446,5 +477,44 @@ bool LyricsFinder::foundLocalResults() const
 {
     return std::ranges::any_of(
         m_searches, [](const SourceSearch& search) { return search.source->isLocal() && !search.results.empty(); });
+}
+
+QString LyricsFinder::historyKey() const
+{
+    // Changing the track's details makes a previous result invalid
+    const QStringList parts{m_params.track.uniqueFilepath(), m_params.title, m_params.artist, m_params.album};
+
+    return QString::fromLatin1(QCryptographicHash::hash(parts.join(u'\n').toUtf8(), QCryptographicHash::Sha1).toHex());
+}
+
+LyricsSearchHistory* LyricsFinder::syncedHistory() const
+{
+    // Changing the match threshold or the enabled external sources makes all previous results invalid.
+    // Source order doesn't affect whether anything is found, so it is left out.
+    QStringList sources;
+    for(const auto* source : m_sources) {
+        if(!source->isLocal() && source->enabled()) {
+            sources.append(source->name());
+        }
+    }
+    sources.sort();
+
+    const int threshold = m_settings->fileValue(Settings::MatchThreshold, 75).toInt();
+    m_history->setContext(QString::number(threshold) + u'|' + sources.join(u'|'));
+    return m_history.get();
+}
+
+void LyricsFinder::recordSearchHistory()
+{
+    if(!m_history) {
+        return;
+    }
+
+    if(m_foundAnyResults) {
+        syncedHistory()->remove(historyKey());
+    }
+    else if(m_externalSearched && !m_externalFailed) {
+        syncedHistory()->add(historyKey());
+    }
 }
 } // namespace Fooyin::Lyrics

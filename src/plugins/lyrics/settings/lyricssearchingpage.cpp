@@ -20,6 +20,7 @@
 #include "lyricssearchingpage.h"
 
 #include "lyricsconstants.h"
+#include "lyricssearchhistory.h"
 #include "lyricssettings.h"
 
 #include <gui/guiconstants.h>
@@ -31,6 +32,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QPushButton>
 
 using namespace Qt::StringLiterals;
 
@@ -85,6 +87,12 @@ LyricsSearchingPageWidget::LyricsSearchingPageWidget(SettingsManager* settings)
     behaviourLayout->addWidget(m_autoSearchSkipScript, row++, 1);
     behaviourLayout->addWidget(m_skipRemaining, row++, 0, 1, 2);
     behaviourLayout->addWidget(m_skipExternal, row++, 0, 1, 2);
+
+    auto* clearHistory = new QPushButton(tr("Clear tracks with no lyrics found"), this);
+    clearHistory->setToolTip(tr("Automatic searches skip external sources for tracks where none had lyrics.\n"
+                                "Clearing this allows those tracks to be searched again."));
+    QObject::connect(clearHistory, &QPushButton::clicked, this, [] { LyricsSearchHistory::shared()->clear(); });
+    behaviourLayout->addWidget(clearHistory, row++, 0, 1, 2, Qt::AlignLeft);
 
     auto* paramsGroup  = new QGroupBox(tr("Search parameters"), this);
     auto* paramsLayout = new QGridLayout(paramsGroup);

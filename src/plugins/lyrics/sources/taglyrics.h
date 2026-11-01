@@ -21,7 +21,11 @@
 
 #include "lyricsource.h"
 
+#include <memory>
+#include <stop_token>
+
 namespace Fooyin {
+class AudioLoader;
 class SettingsManager;
 
 namespace Lyrics {
@@ -35,7 +39,15 @@ public:
     [[nodiscard]] QString name() const override;
     [[nodiscard]] bool isLocal() const override;
 
+    //! Used to read the tags of files which have changed since they were last indexed
+    void setAudioLoader(std::shared_ptr<AudioLoader> audioLoader);
+
     void search(const SearchParams& params) override;
+    void cancel() override;
+
+private:
+    std::shared_ptr<AudioLoader> m_audioLoader;
+    std::stop_source m_stopSource;
 };
 } // namespace Lyrics
 } // namespace Fooyin

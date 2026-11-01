@@ -61,7 +61,8 @@ void LyricsPlugin::initialise(const CorePluginContext& context)
 
     m_lyricsSettings = std::make_unique<LyricsSettings>();
     m_lyricsFinder   = new LyricsFinder(context.networkAccess, m_settings, this);
-    m_lyricsSaver    = new LyricsSaver(context.library, m_settings, this);
+    m_lyricsFinder->setAudioLoader(m_audioLoader);
+    m_lyricsSaver = new LyricsSaver(context.library, m_settings, this);
 
     m_lyricsService = new LyricsPlaybackService(context, m_lyricsFinder, m_lyricsSaver, this);
 }
@@ -191,6 +192,7 @@ void LyricsPlugin::quickSearchLyrics(const Track& track)
     }
 
     auto* finder = new LyricsFinder(m_networkAccess, m_settings, this);
+    finder->setAudioLoader(m_audioLoader);
 
     QObject::connect(
         finder, &LyricsFinder::lyricsFound, this,
@@ -231,6 +233,7 @@ void LyricsPlugin::loadTrackLyricsAndOpenDialog(const Track& track)
     }
 
     auto* finder = new LyricsFinder(m_networkAccess, m_settings, this);
+    finder->setAudioLoader(m_audioLoader);
 
     QObject::connect(
         finder, &LyricsFinder::lyricsFound, this,
