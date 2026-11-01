@@ -28,9 +28,11 @@
 #include <gui/scripting/scriptformatter.h>
 #include <utils/worker.h>
 
+#include <QColor>
 #include <QJsonObject>
 
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <unordered_map>
 
@@ -77,6 +79,8 @@ struct ExpansionRow
     RichTextLayout layout;
     ScriptPlayingIcon playingIcon{ScriptPlayingIcon::None};
     int height{0};
+    std::optional<QFont> font{};
+    QColor background{};
 };
 
 struct ExpansionSubheader
@@ -100,6 +104,8 @@ struct ExpansionRequest
     LibraryInfoMap libraries;
     QueueTracks queue;
     QFont font;
+    std::optional<QFont> playingRowFont;
+    QColor playingRowColour;
     bool rebuild{true};
     uint8_t sections{ExpansionAll};
     //! Empty means all rows when ExpansionTracks is requested
@@ -119,6 +125,7 @@ struct ExpansionResult
     std::vector<std::pair<int, ExpansionRow>> rows;
     std::vector<ExpansionSubheader> subheaders;
     QStringList errors;
+    uint8_t errorSections{0};
     bool rebuild{true};
     bool cancelled{false};
     uint8_t sections{ExpansionAll};
@@ -141,8 +148,8 @@ Q_SIGNALS:
 private:
     ExpansionResult evaluate(ExpansionRequest request, std::stop_token stop);
 
-    void addErrors(const QString& section, const ErrorList& errors);
-    RichText formatted(const QString& text, const QString& section);
+    void addErrors(const QString& section, const ErrorList& errors, uint8_t sections = 0);
+    RichText formatted(const QString& text, const QString& section, uint8_t sections = 0);
     [[nodiscard]] ScriptContext groupContext() const;
 
     void prepareScripts();

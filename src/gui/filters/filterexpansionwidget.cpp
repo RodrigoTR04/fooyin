@@ -378,6 +378,11 @@ void FilterExpansionWidget::setBackground(const BackgroundConfig& config, const 
     updatePalette();
 }
 
+void FilterExpansionWidget::setAlternatingRowColors(bool enabled)
+{
+    m_tracks->setAlternatingRowColors(enabled);
+}
+
 void FilterExpansionWidget::setMinimumColumnRows(int rows)
 {
     rows = std::max(1, rows);
@@ -539,6 +544,11 @@ QColor FilterExpansionWidget::defaultBackgroundColour() const
 QSize FilterExpansionWidget::sizeHint() const
 {
     return {320, heightForWidth(width())};
+}
+
+bool FilterExpansionWidget::hasHeightForWidth() const
+{
+    return true;
 }
 
 int FilterExpansionWidget::heightForWidth(int width) const

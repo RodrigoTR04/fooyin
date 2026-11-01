@@ -67,6 +67,7 @@ public:
     void setPreviewMode();
     void setPreviewArtwork(const QPixmap& artwork, bool show);
     void setBackground(const BackgroundConfig& config, const QString& colour);
+    void setAlternatingRowColors(bool enabled);
     void setMinimumColumnRows(int rows);
     void setMaximumColumns(int columns);
     void setStretchColumns(bool stretch);
@@ -84,6 +85,7 @@ public:
 
     [[nodiscard]] QColor defaultBackgroundColour() const;
     [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
     [[nodiscard]] int heightForWidth(int width) const override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 

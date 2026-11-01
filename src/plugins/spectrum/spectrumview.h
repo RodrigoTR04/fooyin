@@ -35,6 +35,8 @@
 #include <vector>
 
 namespace Fooyin {
+class WidgetBackground;
+struct BackgroundConfig;
 class EngineController;
 class PlayerController;
 
@@ -46,6 +48,9 @@ class SpectrumView : public QWidget
 public:
     explicit SpectrumView(EngineController* engine, QWidget* parent = nullptr);
 
+    void setBackgroundConfig(const BackgroundConfig& config);
+    void setBackgroundPixmap(const QPixmap& pixmap);
+
     void setConfig(const SpectrumWidget::ConfigData& config);
     void refreshStyleColours();
     [[nodiscard]] const SpectrumWidget::ConfigData& currentConfig() const;
@@ -54,6 +59,7 @@ Q_SIGNALS:
     void contextMenuRequested(const QPoint& pos);
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void timerEvent(QTimerEvent* event) override;
@@ -119,6 +125,7 @@ private:
     void ensureStaticLayer(const QPalette& palette) const;
     [[nodiscard]] QRectF staticLayerSourceRect(const QRect& logicalRect) const;
 
+    WidgetBackground* m_background;
     VisualisationSessionPtr m_session;
     SpectrumWidget::ConfigData m_config;
     SpectrumAxisRenderer m_axisRenderer;

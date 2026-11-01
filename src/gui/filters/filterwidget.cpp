@@ -77,6 +77,7 @@ constexpr auto FilterSendPlaybackKey      = u"Filters/StartPlaybackOnSend";
 constexpr auto FilterSourceKey            = u"Filters/Source";
 constexpr auto FilterKeepAliveKey         = u"Filters/KeepAlive";
 constexpr auto FilterIconSizeKey          = u"Filters/IconSize";
+constexpr auto FilterAutoFitArtworkKey    = u"Filters/AutoFitArtwork";
 constexpr auto FilterIconHorizontalGapKey = u"Filters/IconHorizontalGap";
 constexpr auto FilterIconVerticalGapKey   = u"Filters/IconVerticalGap";
 constexpr auto FilterArtworkRadiusKey     = u"Filters/ArtworkCornerRadius";
@@ -84,6 +85,7 @@ constexpr auto FilterArtworkMarginsKey    = u"Filters/ArtworkMargins";
 
 constexpr auto FilterExpandGroupsKey                = u"Filters/ExpandGroups";
 constexpr auto FilterExpansionAnimatedKey           = u"Filters/ExpansionAnimated";
+constexpr auto FilterExpansionAlternatingRowsKey    = u"Filters/ExpansionAlternatingRows";
 constexpr auto FilterExpandedArtworkKey             = u"Filters/ExpandedArtwork";
 constexpr auto FilterExpansionDoubleClickKey        = u"Filters/ExpansionDoubleClickBehaviour";
 constexpr auto FilterExpansionMiddleClickKey        = u"Filters/ExpansionMiddleClickBehaviour";
@@ -101,6 +103,8 @@ constexpr auto FilterExpansionMinimumRowsKey        = u"Filters/ExpansionMinimum
 constexpr auto FilterExpansionStretchColumnsKey     = u"Filters/ExpansionStretchColumns";
 constexpr auto FilterExpansionMinimumColumnWidthKey = u"Filters/ExpansionMinimumColumnWidth";
 constexpr auto FilterExpansionScriptsKey            = u"Filters/ExpansionScripts";
+constexpr auto FilterExpansionPlayingRowFontKey     = u"Filters/ExpansionPlayingRowFont";
+constexpr auto FilterExpansionPlayingRowColourKey   = u"Filters/ExpansionPlayingRowColour";
 
 constexpr auto FilterBackgroundKey                = u"Filters/Background";
 constexpr auto FilterExpansionBackgroundKey       = u"Filters/ExpansionBackground";
@@ -622,6 +626,7 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
     config.restoreState        = m_settings->fileValue(FilterRestoreStateKey, config.restoreState).toBool();
     config.rowHeight           = m_settings->fileValue(FilterRowHeightKey, config.rowHeight).toInt();
     config.iconSize            = m_settings->fileValue(FilterIconSizeKey, config.iconSize).toSize();
+    config.autoFitArtwork      = m_settings->fileValue(FilterAutoFitArtworkKey, config.autoFitArtwork).toBool();
     config.iconHorizontalGap   = m_settings->fileValue(FilterIconHorizontalGapKey, config.iconHorizontalGap).toInt();
     config.iconVerticalGap     = m_settings->fileValue(FilterIconVerticalGapKey, config.iconVerticalGap).toInt();
     config.artworkCornerRadius = m_settings->fileValue(FilterArtworkRadiusKey, config.artworkCornerRadius).toInt();
@@ -629,7 +634,9 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterArtworkMarginsKey).toMap()), config.artworkMargins);
     config.expandGroups      = m_settings->fileValue(FilterExpandGroupsKey, config.expandGroups).toBool();
     config.expansionAnimated = m_settings->fileValue(FilterExpansionAnimatedKey, config.expansionAnimated).toBool();
-    config.expandedArtwork   = m_settings->fileValue(FilterExpandedArtworkKey, config.expandedArtwork).toBool();
+    config.expansionAlternatingRows
+        = m_settings->fileValue(FilterExpansionAlternatingRowsKey, config.expansionAlternatingRows).toBool();
+    config.expandedArtwork         = m_settings->fileValue(FilterExpandedArtworkKey, config.expandedArtwork).toBool();
     config.expansionArtworkMargins = artworkMarginsFromJson(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterExpansionArtworkMarginsKey).toMap()), {10, 10, 10, 10});
     config.expansionArtworkAutoMargins
@@ -660,6 +667,10 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
         m_settings->fileValue(FilterExpansionMinimumColumnWidthKey, config.expansionMinimumColumnWidth).toInt(), 25,
         300);
     config.expansionScripts.load(QJsonObject::fromVariantMap(m_settings->fileValue(FilterExpansionScriptsKey).toMap()));
+    config.expansionPlayingRowFont
+        = m_settings->fileValue(FilterExpansionPlayingRowFontKey, config.expansionPlayingRowFont).toString();
+    config.expansionPlayingRowColour
+        = m_settings->fileValue(FilterExpansionPlayingRowColourKey, config.expansionPlayingRowColour).toString();
 
     config.background.loadLayout(QJsonObject::fromVariantMap(m_settings->fileValue(FilterBackgroundKey).toMap()));
     config.expansionBackground.loadLayout(
@@ -706,12 +717,14 @@ void FilterWidget::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(FilterRestoreStateKey, config.restoreState);
     m_settings->fileSet(FilterRowHeightKey, config.rowHeight);
     m_settings->fileSet(FilterIconSizeKey, config.iconSize);
+    m_settings->fileSet(FilterAutoFitArtworkKey, config.autoFitArtwork);
     m_settings->fileSet(FilterIconHorizontalGapKey, config.iconHorizontalGap);
     m_settings->fileSet(FilterIconVerticalGapKey, config.iconVerticalGap);
     m_settings->fileSet(FilterArtworkRadiusKey, config.artworkCornerRadius);
     m_settings->fileSet(FilterArtworkMarginsKey, artworkMarginsToJson(config.artworkMargins).toVariantMap());
     m_settings->fileSet(FilterExpandGroupsKey, config.expandGroups);
     m_settings->fileSet(FilterExpansionAnimatedKey, config.expansionAnimated);
+    m_settings->fileSet(FilterExpansionAlternatingRowsKey, config.expansionAlternatingRows);
     m_settings->fileSet(FilterExpandedArtworkKey, config.expandedArtwork);
     m_settings->fileSet(FilterExpansionArtworkMarginsKey,
                         artworkMarginsToJson(config.expansionArtworkMargins).toVariantMap());
@@ -728,6 +741,8 @@ void FilterWidget::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(FilterExpansionStretchColumnsKey, config.expansionStretchColumns);
     m_settings->fileSet(FilterExpansionMinimumColumnWidthKey, config.expansionMinimumColumnWidth);
     m_settings->fileSet(FilterExpansionScriptsKey, config.expansionScripts.toJson().toVariantMap());
+    m_settings->fileSet(FilterExpansionPlayingRowFontKey, config.expansionPlayingRowFont);
+    m_settings->fileSet(FilterExpansionPlayingRowColourKey, config.expansionPlayingRowColour);
 
     QJsonObject background;
     config.background.saveLayout(background);
@@ -763,12 +778,14 @@ void FilterWidget::clearSavedDefaults() const
     m_settings->fileRemove(FilterRestoreStateKey);
     m_settings->fileRemove(FilterRowHeightKey);
     m_settings->fileRemove(FilterIconSizeKey);
+    m_settings->fileRemove(FilterAutoFitArtworkKey);
     m_settings->fileRemove(FilterIconHorizontalGapKey);
     m_settings->fileRemove(FilterIconVerticalGapKey);
     m_settings->fileRemove(FilterArtworkRadiusKey);
     m_settings->fileRemove(FilterArtworkMarginsKey);
     m_settings->fileRemove(FilterExpandGroupsKey);
     m_settings->fileRemove(FilterExpansionAnimatedKey);
+    m_settings->fileRemove(FilterExpansionAlternatingRowsKey);
     m_settings->fileRemove(FilterExpandedArtworkKey);
     m_settings->fileRemove(FilterExpansionArtworkMarginsKey);
     m_settings->fileRemove(FilterExpansionArtworkAutoMarginsKey);
@@ -784,6 +801,8 @@ void FilterWidget::clearSavedDefaults() const
     m_settings->fileRemove(FilterExpansionStretchColumnsKey);
     m_settings->fileRemove(FilterExpansionMinimumColumnWidthKey);
     m_settings->fileRemove(FilterExpansionScriptsKey);
+    m_settings->fileRemove(FilterExpansionPlayingRowFontKey);
+    m_settings->fileRemove(FilterExpansionPlayingRowColourKey);
     m_settings->fileRemove(FilterBackgroundKey);
     m_settings->fileRemove(FilterExpansionBackgroundKey);
     m_settings->fileRemove(FilterExpansionBackgroundColourKey);
@@ -805,6 +824,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
     validated.expansionBackground.normalise();
     validated.expansionBackground.fadeDuration = 0;
     validated.expansionBackgroundColour        = normaliseColour(validated.expansionBackgroundColour);
+    validated.expansionPlayingRowColour        = normaliseColour(validated.expansionPlayingRowColour);
 
     if(validated.source != FilterSource::Library && validated.source != FilterSource::CurrentPlaylist) {
         validated.source = FilterSource::Library;
@@ -852,6 +872,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
        || m_config.showSummary != validated.showSummary || m_config.showHeader != validated.showHeader
        || m_config.showScrollbar != validated.showScrollbar || m_config.alternatingRows != validated.alternatingRows;
     const bool backgroundChanged = m_config.background != validated.background
+                                || m_config.expansionAlternatingRows != validated.expansionAlternatingRows
                                 || m_config.expansionBackground != validated.expansionBackground
                                 || m_config.expansionBackgroundColour != validated.expansionBackgroundColour;
     const bool layoutChanged     = m_config.expansionMinimumRows != validated.expansionMinimumRows
@@ -877,13 +898,16 @@ void FilterWidget::applyConfig(const ConfigData& config)
        || m_config.preservePlaybackPlaylist != validated.preservePlaybackPlaylist
        || m_config.playlistName != validated.playlistName || m_config.restoreState != validated.restoreState
        || m_config.rowHeight != validated.rowHeight || m_config.iconSize != validated.iconSize
+       || m_config.autoFitArtwork != validated.autoFitArtwork
        || m_config.iconHorizontalGap != validated.iconHorizontalGap
        || m_config.iconVerticalGap != validated.iconVerticalGap
        || m_config.artworkCornerRadius != validated.artworkCornerRadius
        || m_config.artworkMargins != validated.artworkMargins || m_config.expandGroups != validated.expandGroups
        || m_config.expansionAnimated != validated.expansionAnimated
        || m_config.expandedArtwork != validated.expandedArtwork
-       || m_config.expansionScripts != validated.expansionScripts;
+       || m_config.expansionScripts != validated.expansionScripts
+       || m_config.expansionPlayingRowFont != validated.expansionPlayingRowFont
+       || m_config.expansionPlayingRowColour != validated.expansionPlayingRowColour;
 
     if(hasConfigChanged) {
         ++m_expansionRequest;
@@ -909,15 +933,17 @@ void FilterWidget::applyConfig(const ConfigData& config)
 
     if(m_expansion) {
         m_expansion->setBackground(m_config.expansionBackground, m_config.expansionBackgroundColour);
+        m_expansion->setAlternatingRowColors(m_config.expansionAlternatingRows);
     }
 
     m_model->setRowHeight(m_config.rowHeight);
-    m_model->setIconSize(m_config.iconSize);
+    m_view->setAutoFitArtwork(m_config.autoFitArtwork);
     m_view->setIconHorizontalGap(m_config.iconHorizontalGap);
     m_view->setIconVerticalGap(m_config.iconVerticalGap);
     m_delegate->setArtworkCornerRadius(m_config.artworkCornerRadius);
     m_delegate->setArtworkMargins(m_config.artworkMargins);
     m_view->changeIconSize(m_config.iconSize);
+    m_model->setIconSize(m_view->effectiveIconSize());
 
     if(m_expansion && layoutChanged) {
         m_expansion->setArtworkOnLeft(m_config.expansionArtworkOnLeft);
@@ -1138,10 +1164,14 @@ void FilterWidget::setupConnections()
     QObject::connect(m_view, &QAbstractItemView::iconSizeChanged, this, [this](const QSize& size) {
         if(size.isValid() && m_config.iconSize != size) {
             m_config.iconSize = size;
-            m_model->setIconSize(size);
+            m_model->setIconSize(m_view->effectiveIconSize());
             scheduleVisibleCoverPinUpdate();
             Q_EMIT configChanged();
         }
+    });
+    QObject::connect(m_view, &ExpandedTreeView::effectiveIconSizeChanged, this, [this](const QSize& size) {
+        m_model->setIconSize(size);
+        scheduleVisibleCoverPinUpdate();
     });
     QObject::connect(m_view->verticalScrollBar(), &QScrollBar::valueChanged, this,
                      [this]() { scheduleVisibleCoverPinUpdate(); });
@@ -1167,6 +1197,7 @@ void FilterWidget::setupConnections()
     m_settings->subscribe<Settings::Gui::ResolvedAppStyle>(this, [this](const QVariant& var) {
         const auto resolvedStyle = var.value<ResolvedAppStyle>();
         Gui::updateItemViewStyle(m_view, resolvedStyle.palette);
+        scheduleExpansionUpdate();
     });
 
     const auto refreshRatingStars = [this]() {
@@ -1288,7 +1319,8 @@ void FilterWidget::updateVisibleCoverPins()
 
     std::set<QString> keys;
 
-    const int pinMargin       = std::max(m_config.iconSize.width(), m_config.iconSize.height());
+    const QSize artworkSize   = m_view->effectiveIconSize();
+    const int pinMargin       = std::max(artworkSize.width(), artworkSize.height());
     const auto visibleIndexes = m_view->visibleIndexes(pinMargin);
 
     for(const QModelIndex& index : visibleIndexes) {
@@ -1454,6 +1486,17 @@ ExpansionRequest FilterWidget::expansionRequest(std::shared_ptr<const TrackList>
     request.context.playlistData.trackCount = static_cast<int>(request.tracks->size());
     request.context.freeze();
 
+    if(!m_config.expansionPlayingRowFont.isEmpty()) {
+        QFont font;
+        if(font.fromString(m_config.expansionPlayingRowFont)) {
+            request.playingRowFont = font;
+        }
+    }
+    request.playingRowColour = QColor{m_config.expansionPlayingRowColour};
+    if(!request.playingRowColour.isValid()) {
+        request.playingRowColour = Gui::defaultPlayingRowColour();
+    }
+
     if(m_player) {
         request.queue = m_player->playbackQueue().tracks();
     }
@@ -1487,6 +1530,7 @@ void FilterWidget::applyExpansionContent(const ExpansionResult& result)
     }
 
     m_expansion->setBackground(m_config.expansionBackground, m_config.expansionBackgroundColour);
+    m_expansion->setAlternatingRowColors(m_config.expansionAlternatingRows);
     m_expansion->setMinimumColumnRows(m_config.expansionMinimumRows);
     m_expansion->setMaximumColumns(m_config.expansionMaximumColumns);
     m_expansion->setStretchColumns(m_config.expansionStretchColumns);
@@ -1504,6 +1548,10 @@ void FilterWidget::applyExpansionContent(const ExpansionResult& result)
     const bool changed = m_displayedKey != result.key;
     if(result.rebuild) {
         if(changed) {
+            if(m_pendingScrollPosition < 0) {
+                // Reveal clipped icons before the expansion starts
+                m_view->scrollTo(index, QAbstractItemView::EnsureVisible);
+            }
             m_view->prepareExpansionChange();
         }
         {
@@ -1928,6 +1976,7 @@ FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layou
         config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
     }
     config.iconHorizontalGap   = layout.value("IconHorizontalGap"_L1).toInt(config.iconHorizontalGap);
+    config.autoFitArtwork      = layout.value("AutoFitArtwork"_L1).toBool(config.autoFitArtwork);
     config.iconVerticalGap     = layout.value("IconVerticalGap"_L1).toInt(config.iconVerticalGap);
     config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
     config.artworkMargins = artworkMarginsFromJson(layout.value("ArtworkMargins"_L1).toObject(), config.artworkMargins);
@@ -1945,6 +1994,8 @@ FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layou
         layout.value("ExpansionArtworkReflectionGap"_L1).toInt(config.expansionArtworkReflectionGap), 0, 100);
     config.expansionShowCloseButton
         = layout.value("ExpansionShowCloseButton"_L1).toBool(config.expansionShowCloseButton);
+    config.expansionAlternatingRows
+        = layout.value("ExpansionAlternatingRows"_L1).toBool(config.expansionAlternatingRows);
     config.expansionArtworkOnLeft = layout.value("ExpansionArtworkOnLeft"_L1).toBool(config.expansionArtworkOnLeft);
     config.expansionArtworkSize
         = std::clamp(layout.value("ExpansionArtworkSize"_L1).toInt(config.expansionArtworkSize), 50, 200);
@@ -1956,6 +2007,10 @@ FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layou
     config.expansionMinimumColumnWidth
         = std::clamp(layout.value("ExpansionMinimumColumnWidth"_L1).toInt(config.expansionMinimumColumnWidth), 25, 300);
     config.expansionScripts.load(layout.value("ExpansionScripts"_L1).toObject());
+    config.expansionPlayingRowFont
+        = layout.value("ExpansionPlayingRowFont"_L1).toString(config.expansionPlayingRowFont);
+    config.expansionPlayingRowColour
+        = layout.value("ExpansionPlayingRowColour"_L1).toString(config.expansionPlayingRowColour);
     config.expandGroups        = layout.value("ExpandGroups"_L1).toBool(config.expandGroups);
     config.expansionAnimated   = layout.value("ExpansionAnimated"_L1).toBool(config.expansionAnimated);
     config.expandedArtwork     = layout.value("ExpandedArtwork"_L1).toBool(config.expandedArtwork);
@@ -2007,11 +2062,13 @@ void FilterWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& lay
     layout["IconWidth"_L1]                         = config.iconSize.width();
     layout["IconHeight"_L1]                        = config.iconSize.height();
     layout["IconHorizontalGap"_L1]                 = config.iconHorizontalGap;
+    layout["AutoFitArtwork"_L1]                    = config.autoFitArtwork;
     layout["IconVerticalGap"_L1]                   = config.iconVerticalGap;
     layout["ArtworkCornerRadius"_L1]               = config.artworkCornerRadius;
     layout["ArtworkMargins"_L1]                    = artworkMarginsToJson(config.artworkMargins);
     layout["ExpandGroups"_L1]                      = config.expandGroups;
     layout["ExpansionAnimated"_L1]                 = config.expansionAnimated;
+    layout["ExpansionAlternatingRows"_L1]          = config.expansionAlternatingRows;
     layout["ExpandedArtwork"_L1]                   = config.expandedArtwork;
     layout["ExpansionArtworkMargins"_L1]           = artworkMarginsToJson(config.expansionArtworkMargins);
     layout["ExpansionArtworkAutoMargins"_L1]       = config.expansionArtworkAutoMargins;
@@ -2027,6 +2084,8 @@ void FilterWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& lay
     layout["ExpansionStretchColumns"_L1]           = config.expansionStretchColumns;
     layout["ExpansionMinimumColumnWidth"_L1]       = config.expansionMinimumColumnWidth;
     layout["ExpansionScripts"_L1]                  = config.expansionScripts.toJson();
+    layout["ExpansionPlayingRowFont"_L1]           = config.expansionPlayingRowFont;
+    layout["ExpansionPlayingRowColour"_L1]         = config.expansionPlayingRowColour;
     QJsonObject background;
     config.background.saveLayout(background);
     layout["Background"_L1] = background;

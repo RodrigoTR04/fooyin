@@ -27,6 +27,7 @@
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgets/backgroundconfigwidget.h>
 #include <gui/widgets/colourbutton.h>
+#include <gui/widgets/fontbutton.h>
 #include <gui/widgets/hintlabel.h>
 #include <gui/widgets/scriptlineedit.h>
 
@@ -95,7 +96,6 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
     , m_footerScript{new ScriptTextEdit(this)}
     , m_groupByScript{new ScriptTextEdit(this)}
     , m_subheaderScript{new ScriptTextEdit(this)}
-    , m_scriptErrors{new QLabel(this)}
     , m_preview{new FilterExpansionWidget(nullptr, nullptr, this)}
     , m_previewTracks{std::make_shared<const TrackList>(TrackGenerator::generateTracks({.albumCount = 1}))}
     , m_previewSubscription{nullptr}
@@ -126,6 +126,7 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
     , m_rowHeight{new QSpinBox(this)}
     , m_iconWidth{new QSpinBox(this)}
     , m_iconHeight{new QSpinBox(this)}
+    , m_autoFitArtwork{new QCheckBox(tr("Fit artwork to available width"), this)}
     , m_iconHorizontalGap{new QSpinBox(this)}
     , m_iconVerticalGap{new QSpinBox(this)}
     , m_artworkCornerRadius{new QSpinBox(this)}
@@ -136,8 +137,11 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
     , m_background{new BackgroundConfigWidget(this)}
     , m_expansionBackground{new BackgroundConfigWidget(this)}
     , m_expansionBackgroundColour{new ColourButton(tr("Background"), true, this)}
+    , m_expansionPlayingRowFont{new FontButton(tr("Font") + u":"_s, true, this)}
+    , m_expansionPlayingRowColour{new ColourButton(tr("Background colour") + u":"_s, true, this)}
     , m_expandGroups{new QCheckBox(tr("Expand selected group"), this)}
     , m_expansionAnimated{new QCheckBox(tr("Animate expansion and collapse"), this)}
+    , m_expansionAlternatingRows{new QCheckBox(tr("Alternating row colours"), this)}
     , m_expandedArtwork{new QCheckBox(tr("Show artwork in expanded groups"), this)}
     , m_expansionCloseButton{new QCheckBox(tr("Show close button"), this)}
     , m_expansionArtworkReflection{new QCheckBox(tr("Show artwork reflection"), this)}
@@ -227,10 +231,6 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
     m_preview->setPreviewMode();
     m_preview->hide();
 
-    m_scriptErrors->setTextFormat(Qt::PlainText);
-    m_scriptErrors->setWordWrap(true);
-    m_scriptErrors->hide();
-
     auto* syntaxHint = new HintLabel(tr("Use <b>&lt;left&gt;</b> and <b>&lt;right&gt;</b> for alignment, "
                                         "and <b>&lt;hr/&gt;</b> for rules."),
                                      scriptsPage);
@@ -243,7 +243,6 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
 
     scriptLayout->addWidget(syntaxHint);
     scriptLayout->addWidget(columnsHint);
-    scriptLayout->addWidget(m_scriptErrors);
 
     auto* scriptsLayout = new QHBoxLayout(m_scriptsTab);
     auto* previewLayout = new QVBoxLayout();
@@ -338,12 +337,17 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
         tr("The minimum column width is relative to the default width at the current font size.\n"
            "Longer content can exceed this minimum."));
 
+    m_expansionPlayingRowColour->setToolTip(
+        tr("Use a custom background colour for the currently playing row; transparency is supported"));
+    m_expansionPlayingRowFont->setToolTip(tr("Use a custom font for the currently playing row"));
+
     auto* expansionBehaviourLayout = new QGridLayout(expansionBehaviour);
 
     row = 0;
     expansionBehaviourLayout->addWidget(m_expandGroups, row++, 0, 1, 3);
     expansionBehaviourLayout->addWidget(m_expansionAnimated, row++, 0, 1, 3);
     expansionBehaviourLayout->addWidget(m_expansionCloseButton, row++, 0, 1, 3);
+    expansionBehaviourLayout->addWidget(m_expansionAlternatingRows, row++, 0, 1, 3);
     expansionBehaviourLayout->addWidget(new QLabel(tr("Maximum number of columns") + u":"_s, expansionBehaviour), row,
                                         0);
     expansionBehaviourLayout->addWidget(m_expansionMaximumColumns, row++, 1);
@@ -353,6 +357,10 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
     expansionBehaviourLayout->addWidget(m_expansionColumnSizing, row++, 1);
     expansionBehaviourLayout->addWidget(new QLabel(tr("Minimum column width") + u":"_s, expansionBehaviour), row, 0);
     expansionBehaviourLayout->addWidget(m_expansionMinimumColumnWidth, row++, 1);
+    expansionBehaviourLayout->addWidget(Gui::createSectionHeader(tr("Playing track"), expansionBehaviour), row++, 0, 1,
+                                        3);
+    expansionBehaviourLayout->addWidget(m_expansionPlayingRowColour, row++, 0, 1, 3);
+    expansionBehaviourLayout->addWidget(m_expansionPlayingRowFont, row++, 0, 1, 3);
     expansionBehaviourLayout->setColumnStretch(2, 1);
     expansionBehaviourLayout->setRowStretch(row, 1);
 
@@ -467,6 +475,13 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
         margin->setSuffix(u" px"_s);
     }
 
+    auto* sizeLayout = new QGridLayout();
+    sizeLayout->addWidget(new QLabel(tr("Width") + u":"_s, artworkMode), 0, 0);
+    sizeLayout->addWidget(m_iconWidth, 0, 1);
+    sizeLayout->addWidget(new QLabel(tr("Height") + u":"_s, artworkMode), 0, 2);
+    sizeLayout->addWidget(m_iconHeight, 0, 3);
+    sizeLayout->setColumnStretch(4, 1);
+
     auto* gapsLayout = new QGridLayout();
     gapsLayout->addWidget(new QLabel(tr("Horizontal") + u":"_s, artworkMode), 0, 0);
     gapsLayout->addWidget(m_iconHorizontalGap, 0, 1);
@@ -487,18 +502,21 @@ FilterConfigDialog::FilterConfigDialog(FilterWidget* filterWidget, FilterColumnR
 
     auto* iconSizeHint = new HintLabel(tr("Use <b>Ctrl+Scroll</b> in the widget to resize icons."), this);
 
+    m_autoFitArtwork->setToolTip(
+        tr("Resize artwork to fill the available width using the preferred size.\n"
+           "Ctrl+Scroll changes the number of columns. Automatic horizontal gaps are treated as zero."));
+
     row = 0;
     artworkLayout->addWidget(new QLabel(tr("Artwork type") + u":"_s, artworkMode), row, 0);
     artworkLayout->addWidget(m_coverType, row++, 1, 1, 3);
     artworkLayout->addWidget(new QLabel(tr("Artwork source") + u":"_s, artworkMode), row, 0);
     artworkLayout->addWidget(m_coverSource, row++, 1, 1, 3);
-    artworkLayout->addWidget(new QLabel(tr("Width") + u":"_s, this), row, 0);
-    artworkLayout->addWidget(m_iconWidth, row++, 1);
-    artworkLayout->addWidget(new QLabel(tr("Height") + u":"_s, this), row, 0);
-    artworkLayout->addWidget(m_iconHeight, row++, 1);
-    artworkLayout->addWidget(iconSizeHint, row++, 0, 1, 5);
-    artworkLayout->addWidget(new QLabel(tr("Corner radius") + u":"_s, this), row, 0);
+    artworkLayout->addWidget(new QLabel(tr("Corner radius") + u":"_s, artworkMode), row, 0);
     artworkLayout->addWidget(m_artworkCornerRadius, row++, 1);
+    artworkLayout->addWidget(Gui::createSectionHeader(tr("Size"), artworkMode), row++, 0, 1, 5);
+    artworkLayout->addWidget(m_autoFitArtwork, row++, 0, 1, 5);
+    artworkLayout->addLayout(sizeLayout, row++, 0, 1, 5);
+    artworkLayout->addWidget(iconSizeHint, row++, 0, 1, 5);
     artworkLayout->addWidget(Gui::createSectionHeader(tr("Gaps"), artworkMode), row++, 0, 1, 5);
     artworkLayout->addLayout(gapsLayout, row++, 0, 1, 5);
     artworkLayout->addWidget(Gui::createSectionHeader(tr("Margins"), artworkMode), row++, 0, 1, 5);
@@ -571,6 +589,9 @@ void FilterConfigDialog::changeEvent(QEvent* event)
             if(!m_expansionBackgroundColour->isChecked()) {
                 m_expansionBackgroundColour->setColour(m_preview->defaultBackgroundColour());
             }
+            if(!m_expansionPlayingRowColour->isChecked()) {
+                m_expansionPlayingRowColour->setColour(Gui::defaultPlayingRowColour());
+            }
         default:
             break;
     }
@@ -620,6 +641,7 @@ FilterWidget::ConfigData FilterConfigDialog::config() const
         .alternatingRows     = m_alternatingRows->isChecked(),
         .rowHeight           = m_overrideRowHeight->isChecked() ? m_rowHeight->value() : 0,
         .iconSize            = {m_iconWidth->value(), m_iconHeight->value()},
+        .autoFitArtwork      = m_autoFitArtwork->isChecked(),
         .iconHorizontalGap   = m_iconHorizontalGap->value(),
         .iconVerticalGap     = m_iconVerticalGap->value(),
         .artworkCornerRadius = m_artworkCornerRadius->value(),
@@ -628,7 +650,8 @@ FilterWidget::ConfigData FilterConfigDialog::config() const
         .background        = m_background->config(),
         .expandGroups      = m_expandGroups->isChecked(),
         .expansionAnimated = m_expansionAnimated->isChecked(),
-        .expandedArtwork   = m_expandedArtwork->isChecked(),
+        .expansionAlternatingRows          = m_expansionAlternatingRows->isChecked(),
+        .expandedArtwork                   = m_expandedArtwork->isChecked(),
         .expansionMinimumRows              = m_expansionMinimumRows->value(),
         .expansionMaximumColumns           = m_expansionMaximumColumns->value(),
         .expansionStretchColumns           = m_expansionColumnSizing->currentData().toBool(),
@@ -647,6 +670,11 @@ FilterWidget::ConfigData FilterConfigDialog::config() const
         .expansionBackground       = expansionBackground,
         .expansionBackgroundColour = m_expansionBackgroundColour->isChecked()
                                        ? m_expansionBackgroundColour->colour().name(QColor::HexArgb)
+                                       : QString{},
+        .expansionPlayingRowFont
+        = m_expansionPlayingRowFont->isChecked() ? m_expansionPlayingRowFont->buttonFont().toString() : QString{},
+        .expansionPlayingRowColour = m_expansionPlayingRowColour->isChecked()
+                                       ? m_expansionPlayingRowColour->colour().name(QColor::HexArgb)
                                        : QString{},
     };
 }
@@ -691,6 +719,7 @@ void FilterConfigDialog::setConfig(const FilterWidget::ConfigData& config)
     m_rowHeight->setEnabled(m_overrideRowHeight->isChecked());
     m_iconWidth->setValue(config.iconSize.width());
     m_iconHeight->setValue(config.iconSize.height());
+    m_autoFitArtwork->setChecked(config.autoFitArtwork);
     m_iconHorizontalGap->setValue(config.iconHorizontalGap);
     m_iconVerticalGap->setValue(config.iconVerticalGap);
     m_artworkCornerRadius->setValue(config.artworkCornerRadius);
@@ -706,8 +735,22 @@ void FilterConfigDialog::setConfig(const FilterWidget::ConfigData& config)
     m_expansionBackgroundColour->setColour(backgroundColour.isValid() ? backgroundColour
                                                                       : m_preview->defaultBackgroundColour());
 
+    m_expansionPlayingRowFont->setChecked(!config.expansionPlayingRowFont.isEmpty());
+    if(config.expansionPlayingRowFont.isEmpty()) {
+        m_expansionPlayingRowFont->setButtonFont(m_preview->font());
+    }
+    else {
+        m_expansionPlayingRowFont->setButtonFont(config.expansionPlayingRowFont);
+    }
+
+    const QColor playingRowColour{config.expansionPlayingRowColour};
+    m_expansionPlayingRowColour->setChecked(playingRowColour.isValid());
+    m_expansionPlayingRowColour->setColour(playingRowColour.isValid() ? playingRowColour
+                                                                      : Gui::defaultPlayingRowColour());
+
     m_expandGroups->setChecked(config.expandGroups);
     m_expansionAnimated->setChecked(config.expansionAnimated);
+    m_expansionAlternatingRows->setChecked(config.expansionAlternatingRows);
     m_expansionArtworkAutoMargins->setChecked(config.expansionArtworkAutoMargins);
     m_expansionArtworkLeftMargin->setValue(config.expansionArtworkMargins.left());
     m_expansionArtworkTopMargin->setValue(config.expansionArtworkMargins.top());
@@ -752,9 +795,10 @@ void FilterConfigDialog::mergeExternalConfig(const FilterWidget::ConfigData& pre
         &FilterWidget::ConfigData::showHeader, &FilterWidget::ConfigData::showScrollbar,
         &FilterWidget::ConfigData::alternatingRows, &FilterWidget::ConfigData::rowHeight,
         &FilterWidget::ConfigData::iconSize, &FilterWidget::ConfigData::iconHorizontalGap,
-        &FilterWidget::ConfigData::iconVerticalGap, &FilterWidget::ConfigData::artworkCornerRadius,
-        &FilterWidget::ConfigData::artworkMargins, &FilterWidget::ConfigData::expandGroups,
-        &FilterWidget::ConfigData::expansionAnimated, &FilterWidget::ConfigData::expandedArtwork,
+        &FilterWidget::ConfigData::autoFitArtwork, &FilterWidget::ConfigData::iconVerticalGap,
+        &FilterWidget::ConfigData::artworkCornerRadius, &FilterWidget::ConfigData::artworkMargins,
+        &FilterWidget::ConfigData::expandGroups, &FilterWidget::ConfigData::expansionAnimated,
+        &FilterWidget::ConfigData::expansionAlternatingRows, &FilterWidget::ConfigData::expandedArtwork,
         &FilterWidget::ConfigData::expansionMinimumRows, &FilterWidget::ConfigData::expansionMaximumColumns,
         &FilterWidget::ConfigData::expansionArtworkOnLeft, &FilterWidget::ConfigData::expansionStretchColumns,
         &FilterWidget::ConfigData::expansionMinimumColumnWidth, &FilterWidget::ConfigData::expansionArtworkSize,
@@ -764,11 +808,20 @@ void FilterConfigDialog::mergeExternalConfig(const FilterWidget::ConfigData& pre
         &FilterWidget::ConfigData::expansionArtworkReflectionGap,
         &FilterWidget::ConfigData::expansionArtworkAutoMargins, &FilterWidget::ConfigData::expansionArtworkMargins,
         &FilterWidget::ConfigData::expansionScripts, &FilterWidget::ConfigData::background,
-        &FilterWidget::ConfigData::expansionBackground, &FilterWidget::ConfigData::expansionBackgroundColour);
+        &FilterWidget::ConfigData::expansionBackground, &FilterWidget::ConfigData::expansionBackgroundColour,
+        &FilterWidget::ConfigData::expansionPlayingRowFont, &FilterWidget::ConfigData::expansionPlayingRowColour);
 }
 
 void FilterConfigDialog::setupConnections()
 {
+    const auto updateAutoFitArtwork = [this]() {
+        m_autoFitArtwork->setEnabled(m_artworkBottomMode->isChecked() || m_artworkNoLabelsMode->isChecked());
+    };
+
+    updateAutoFitArtwork();
+    QObject::connect(m_artworkBottomMode, &QRadioButton::toggled, this, updateAutoFitArtwork);
+    QObject::connect(m_artworkNoLabelsMode, &QRadioButton::toggled, this, updateAutoFitArtwork);
+
     QObject::connect(m_overrideRowHeight, &QCheckBox::toggled, m_rowHeight, &QWidget::setEnabled);
     QObject::connect(m_playlistEnabled, &QCheckBox::toggled, this, &FilterConfigDialog::updatePlaylistControls);
     QObject::connect(m_manageColumns, &QPushButton::clicked, this, [this]() {
@@ -795,6 +848,8 @@ void FilterConfigDialog::setupConnections()
                      &FilterExpansionWidget::setMinimumColumnWidth);
     QObject::connect(m_expansionCloseButton, &QCheckBox::toggled, m_preview,
                      &FilterExpansionWidget::setCloseButtonVisible);
+    QObject::connect(m_expansionAlternatingRows, &QCheckBox::toggled, m_preview,
+                     &FilterExpansionWidget::setAlternatingRowColors);
     QObject::connect(m_expansionArtworkReflection, &QCheckBox::toggled, this,
                      &FilterConfigDialog::updateExpansionControls);
     QObject::connect(m_expansionArtworkReflection, &QCheckBox::toggled, this,
@@ -824,6 +879,12 @@ void FilterConfigDialog::setupConnections()
     QObject::connect(m_expansionBackgroundColour, &ColourButton::toggled, this,
                      &FilterConfigDialog::updatePreviewBackground);
 
+    QObject::connect(m_expansionPlayingRowFont, &FontButton::fontUpdated, this, &FilterConfigDialog::schedulePreview);
+    QObject::connect(m_expansionPlayingRowFont, &FontButton::toggled, this, &FilterConfigDialog::schedulePreview);
+    QObject::connect(m_expansionPlayingRowColour, &ColourButton::colourUpdated, this,
+                     &FilterConfigDialog::schedulePreview);
+    QObject::connect(m_expansionPlayingRowColour, &ColourButton::toggled, this, &FilterConfigDialog::schedulePreview);
+
     QObject::connect(m_preview, &FilterExpansionWidget::populated, this, &FilterConfigDialog::applyPreview);
     QObject::connect(m_filterWidget, &FilterWidget::filterUpdated, this, &FilterConfigDialog::schedulePreview);
     QObject::connect(m_filterWidget, &FilterWidget::configChanged, this, &FilterConfigDialog::syncCurrentConfig);
@@ -843,10 +904,13 @@ void FilterConfigDialog::updateExpansionControls()
 {
     const bool enabled = m_expandGroups->isChecked();
     m_expansionAnimated->setEnabled(enabled);
+    m_expansionAlternatingRows->setEnabled(enabled);
     m_expansionDoubleClick->setEnabled(enabled);
     m_expansionMiddleClick->setEnabled(enabled);
     m_expansionBackground->setEnabled(enabled);
     m_expansionBackgroundColour->setEnabled(enabled);
+    m_expansionPlayingRowFont->setEnabled(enabled);
+    m_expansionPlayingRowColour->setEnabled(enabled);
     m_expansionCloseButton->setEnabled(enabled);
     m_expandedArtwork->setEnabled(enabled);
     m_expansionMaximumColumns->setEnabled(enabled);
@@ -916,8 +980,11 @@ void FilterConfigDialog::applyPreview(const ExpansionResult& result)
         return;
     }
 
-    m_scriptErrors->setText(result.errors.join(u"\n"_s));
-    m_scriptErrors->setVisible(!result.errors.empty());
+    m_headerScript->setError(result.errorSections & ExpansionHeader);
+    m_trackScript->setError(result.errorSections & ExpansionTracks);
+    m_footerScript->setError(result.errorSections & ExpansionFooter);
+    m_groupByScript->setError(result.errorSections & ExpansionGrouping);
+    m_subheaderScript->setError(result.errorSections & ExpansionSubheaders);
 
     if(m_previewSubscription) {
         m_previewSubscription->setDependencies(m_scriptsTab->isVisible() ? result.dependencies.combined()
@@ -960,8 +1027,18 @@ void FilterConfigDialog::updatePreview(bool synchronous)
         }
     }
 
-    auto request       = m_filterWidget->expansionPreviewRequest(scripts(), m_previewTracks);
-    request.generation = m_previewGeneration;
+    auto request             = m_filterWidget->expansionPreviewRequest(scripts(), m_previewTracks);
+    request.generation       = m_previewGeneration;
+    request.playingRowFont   = m_expansionPlayingRowFont->isChecked()
+                                 ? std::optional{m_expansionPlayingRowFont->buttonFont()}
+                                 : std::nullopt;
+    request.playingRowColour = m_expansionPlayingRowColour->isChecked() ? m_expansionPlayingRowColour->colour()
+                                                                        : Gui::defaultPlayingRowColour();
+
+    if(!request.tracks->empty()) {
+        request.context.playback.track     = request.tracks->front();
+        request.context.playback.playState = Player::PlayState::Playing;
+    }
 
     if(synchronous) {
         FilterExpansionPopulator populator;

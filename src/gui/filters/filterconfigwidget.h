@@ -28,7 +28,6 @@
 class QCheckBox;
 class QComboBox;
 class QLineEdit;
-class QLabel;
 class QTimerEvent;
 class QPushButton;
 class QSpinBox;
@@ -38,6 +37,7 @@ namespace Fooyin {
 class ScriptTextEdit;
 class BackgroundConfigWidget;
 class ColourButton;
+class FontButton;
 
 namespace Filters {
 class FilterColumnRegistry;
@@ -78,7 +78,6 @@ private:
     ScriptTextEdit* m_footerScript;
     ScriptTextEdit* m_groupByScript;
     ScriptTextEdit* m_subheaderScript;
-    QLabel* m_scriptErrors;
     FilterExpansionWidget* m_preview;
     std::shared_ptr<const TrackList> m_previewTracks;
     ScriptSubscription* m_previewSubscription;
@@ -114,6 +113,7 @@ private:
     QSpinBox* m_rowHeight;
     QSpinBox* m_iconWidth;
     QSpinBox* m_iconHeight;
+    QCheckBox* m_autoFitArtwork;
     QSpinBox* m_iconHorizontalGap;
     QSpinBox* m_iconVerticalGap;
     QSpinBox* m_artworkCornerRadius;
@@ -124,8 +124,11 @@ private:
     BackgroundConfigWidget* m_background;
     BackgroundConfigWidget* m_expansionBackground;
     ColourButton* m_expansionBackgroundColour;
+    FontButton* m_expansionPlayingRowFont;
+    ColourButton* m_expansionPlayingRowColour;
     QCheckBox* m_expandGroups;
     QCheckBox* m_expansionAnimated;
+    QCheckBox* m_expansionAlternatingRows;
     QCheckBox* m_expandedArtwork;
     QCheckBox* m_expansionCloseButton;
     QCheckBox* m_expansionArtworkReflection;

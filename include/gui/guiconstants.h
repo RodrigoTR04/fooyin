@@ -36,6 +36,7 @@ namespace Icons {
 constexpr auto Fooyin       = "fooyin";
 constexpr auto FooyinWindow = "org.fooyin.fooyin";
 constexpr auto NoCover      = "nocover";
+constexpr auto NoArtist     = "view-media-artist";
 constexpr auto Play         = "media-playback-start";
 constexpr auto Pause        = "media-playback-pause";
 constexpr auto Stop         = "media-playback-stop";
@@ -297,6 +298,7 @@ constexpr auto DspManager                         = "Fooyin.Page.Playback.DspMan
 constexpr auto NowPlaying                         = "Fooyin.Page.Playback.NowPlaying";
 constexpr auto InterfaceGeneral                   = "Fooyin.Page.Interface.General";
 constexpr auto InterfaceLayout                    = "Fooyin.Page.Interface.Layout";
+constexpr auto InterfaceBackground                = "Fooyin.Page.Interface.Background";
 constexpr auto InterfaceTrackDisplay              = "Fooyin.Page.Interface.TrackDisplay";
 constexpr auto InterfaceSelectionInfo             = "Fooyin.Page.Interface.SelectionInfo";
 constexpr auto InterfaceContextMenuTrack          = "Fooyin.Page.Interface.ContextMenu.Track";
