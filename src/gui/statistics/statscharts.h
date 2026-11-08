@@ -340,6 +340,8 @@ private:
         qreal labelWidth{0};
         qreal headerHeight{0};
         qreal stripSpacing{12};
+        //! Shifts everything across so the calendar is centred when it doesn't fill the width.
+        qreal xOffset{0};
     };
     struct Layout
     {

@@ -37,7 +37,6 @@ class StatisticsService;
 
 namespace Stats {
 class ChipBar;
-class MasonryLayout;
 } // namespace Stats
 
 /*!
@@ -78,24 +77,23 @@ private:
     void setContent(QWidget* content);
     void exportImage();
 
-    void addOverview(Stats::MasonryLayout* layout, const PlayHistoryStats& stats,
-                     const std::optional<PlayHistoryStats>& previous);
-    void addMonths(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addListens(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addDays(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addListeningClock(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addHabits(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addObsession(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addDiscoveries(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addTopTracks(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addMostPlayed(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addTopArtists(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addRediscoveries(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addCompletedAlbums(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addCategories(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addAudioQuality(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addListenTime(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
-    void addDecades(Stats::MasonryLayout* layout, const PlayHistoryStats& stats);
+    QWidget* makeOverview(const PlayHistoryStats& stats, const std::optional<PlayHistoryStats>& previous);
+    QWidget* makeMonths(const PlayHistoryStats& stats);
+    QWidget* makeListens(const PlayHistoryStats& stats);
+    QWidget* makeDays(const PlayHistoryStats& stats);
+    QWidget* makeListeningClock(const PlayHistoryStats& stats);
+    QWidget* makeHabits(const PlayHistoryStats& stats);
+    QWidget* makeObsession(const PlayHistoryStats& stats);
+    QWidget* makeDiscoveries(const PlayHistoryStats& stats);
+    QWidget* makeTopTracks(const PlayHistoryStats& stats);
+    QWidget* makeMostPlayed(const PlayHistoryStats& stats);
+    QWidget* makeTopArtists(const PlayHistoryStats& stats);
+    QWidget* makeRediscoveries(const PlayHistoryStats& stats);
+    QWidget* makeCompletedAlbums(const PlayHistoryStats& stats);
+    QWidget* makeCategories(const PlayHistoryStats& stats);
+    QWidget* makeAudioQuality(const PlayHistoryStats& stats);
+    QWidget* makeListenTime(const PlayHistoryStats& stats);
+    QWidget* makeDecades(const PlayHistoryStats& stats);
 
     StatisticsService* m_service;
 

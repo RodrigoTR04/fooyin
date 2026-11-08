@@ -40,6 +40,7 @@ class StatsArt;
 class QButtonGroup;
 class QHBoxLayout;
 class QLabel;
+class QSpacerItem;
 class QVBoxLayout;
 
 namespace Fooyin::Stats {
@@ -71,9 +72,13 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
+    //! Keeps the spacer that packs the contents to the top of the card as the last item in the body.
+    void keepSpacerLast();
+
     QLabel* m_subtitle;
     QHBoxLayout* m_header;
     QVBoxLayout* m_body;
+    QSpacerItem* m_spacer;
 };
 
 //! A labelled figure, optionally with how much it changed compared with a previous period.
@@ -308,17 +313,18 @@ private:
     int m_spacing;
 };
 
-//! Lays widgets out in columns, each going under the column with the least in it. Narrow windows get a single column.
-class MasonryLayout : public QLayout
+//! Lays widgets out in rows, each of one widget across the full width or two of equal width and height. Narrow
+//! windows get a single column instead.
+class RowGridLayout : public QLayout
 {
     Q_OBJECT
 
 public:
-    explicit MasonryLayout(QWidget* parent = nullptr, int spacing = 12, int minColumnWidth = 430, int maxColumns = 2);
-    ~MasonryLayout() override;
+    explicit RowGridLayout(QWidget* parent = nullptr, int spacing = 12, int minColumnWidth = 440);
+    ~RowGridLayout() override;
 
-    //! Adds a widget that takes the full width, below everything added before it.
-    void addSpanningWidget(QWidget* widget);
+    //! Adds a row. A row with only @p first has it span the full width.
+    void addRow(QWidget* first, QWidget* second = nullptr);
 
     void addItem(QLayoutItem* item) override;
     [[nodiscard]] int count() const override;
@@ -332,19 +338,17 @@ public:
     [[nodiscard]] QSize minimumSize() const override;
 
 private:
-    struct Entry
+    struct Row
     {
-        QLayoutItem* item{nullptr};
-        bool spanning{false};
+        QLayoutItem* first{nullptr};
+        QLayoutItem* second{nullptr};
     };
 
     int layoutItems(const QRect& rect, bool apply) const;
 
-    std::vector<Entry> m_entries;
+    std::vector<Row> m_rows;
     int m_spacing;
     int m_minColumnWidth;
-    int m_maxColumns;
-    bool m_nextSpanning;
 };
 
 //! Lays widgets out in a grid of equally wide tiles, with as many columns as fit the width.

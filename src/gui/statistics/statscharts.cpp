@@ -288,7 +288,10 @@ void ChartWidget::changeEvent(QEvent* event)
 VerticalBarsChart::VerticalBarsChart(QWidget* parent)
     : ChartWidget{parent}
     , m_plotHeight{90}
-{ }
+{
+    // Grows to fill a card that is taller than the chart needs
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+}
 
 void VerticalBarsChart::setData(std::vector<ChartData> points)
 {
@@ -512,7 +515,7 @@ void RankBarsChart::paintEvent(QPaintEvent* /*event*/)
         const qreal trackLeft  = rankWidth + nameWidth + 4;
         const qreal trackRight = width() - widestValue - 14;
         const qreal trackWidth = std::max(0.0, trackRight - trackLeft);
-        const qreal pillHeight = std::min<qreal>(22, m_rowHeight - 12);
+        const qreal pillHeight = std::clamp<qreal>(m_rowHeight * 0.5, 22, 30);
 
         for(size_t i{0}; i < m_data.size(); ++i) {
             const auto& points = m_data[i];
@@ -1270,6 +1273,9 @@ CalendarHeatmapChart::Layout CalendarHeatmapChart::layoutFor(int width) const
         geo.gap  = 1;
         geo.cell = cellFor(geo.gap);
     }
+
+    const qreal used = geo.labelWidth + widest * geo.cell + (widest - 1) * geo.gap;
+    geo.xOffset      = std::max(0.0, (width - used) / 2);
     return layout;
 }
 
@@ -1331,7 +1337,8 @@ int CalendarHeatmapChart::hitTest(const QPoint& pos) const
     const Geometry& geo    = layout.geometry;
     const qreal stripPitch = stripHeight(geo) + geo.stripSpacing;
     const auto strip       = static_cast<size_t>(std::max(0, pos.y()) / stripPitch);
-    if(strip >= layout.strips.size() || pos.x() < geo.labelWidth) {
+    const qreal x          = pos.x() - geo.xOffset;
+    if(strip >= layout.strips.size() || x < geo.labelWidth) {
         return -1;
     }
 
@@ -1341,7 +1348,7 @@ int CalendarHeatmapChart::hitTest(const QPoint& pos) const
     }
 
     const int row  = static_cast<int>(y / (geo.cell + geo.gap));
-    const int week = static_cast<int>((pos.x() - geo.labelWidth) / (geo.cell + geo.gap));
+    const int week = static_cast<int>((x - geo.labelWidth) / (geo.cell + geo.gap));
     if(row > 6) {
         return -1;
     }
@@ -1376,6 +1383,7 @@ void CalendarHeatmapChart::paintEvent(QPaintEvent* /*event*/)
     const qreal stripPitch = stripHeight(geo) + geo.stripSpacing;
     const QFontMetricsF metrics{smallFont()};
     const QLocale locale;
+    painter.translate(geo.xOffset, 0);
 
     for(size_t s{0}; s < layout.strips.size(); ++s) {
         const Strip& strip = layout.strips[s];
@@ -1411,7 +1419,7 @@ void CalendarHeatmapChart::paintEvent(QPaintEvent* /*event*/)
                 const qreal x      = geo.labelWidth + week * (geo.cell + geo.gap);
                 // Skip a label that would collide with the last or run off the end
                 const qreal nameWidth = metrics.horizontalAdvance(name);
-                if(x >= lastRight + 4 && x + nameWidth <= width()) {
+                if(x >= lastRight + 4 && x + nameWidth <= width() - geo.xOffset) {
                     painter.drawText(QPointF{x, top + geo.headerHeight - 6}, name);
                     lastRight = x + nameWidth;
                 }
@@ -1600,7 +1608,10 @@ ListensLineChart::ListensLineChart(QWidget* parent)
     : ChartWidget{parent}
     , m_cumulative{true}
     , m_plotHeight{150}
-{ }
+{
+    // Grows to fill a card that is taller than the chart needs
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+}
 
 void ListensLineChart::setData(std::vector<int> listensPerDay, const QDate& firstDay, bool cumulative)
 {

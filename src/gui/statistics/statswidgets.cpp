@@ -33,8 +33,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSpacerItem>
 #include <QTime>
 #include <QVBoxLayout>
+#include <QWidgetItem>
 
 #include <algorithm>
 #include <cmath>
@@ -121,6 +123,7 @@ StatsCard::StatsCard(const QString& title, const QString& subtitle, QWidget* par
     , m_subtitle{new QLabel(subtitle, this)}
     , m_header{new QHBoxLayout()}
     , m_body{new QVBoxLayout()}
+    , m_spacer{new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding)}
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 14, 16, 16);
@@ -144,7 +147,8 @@ StatsCard::StatsCard(const QString& title, const QString& subtitle, QWidget* par
 
     m_header->addLayout(titles, 1);
     layout->addLayout(m_header);
-    layout->addLayout(m_body);
+    layout->addLayout(m_body, 1);
+    m_body->addItem(m_spacer);
 }
 
 void StatsCard::setSubtitle(const QString& subtitle)
@@ -160,12 +164,22 @@ void StatsCard::addHeaderWidget(QWidget* widget)
 
 void StatsCard::addWidget(QWidget* widget)
 {
-    m_body->addWidget(widget);
+    // A card taller than its contents has them at the top, except for charts, which grow to fill it
+    const bool grows = widget->sizePolicy().verticalPolicy() == QSizePolicy::Expanding;
+    m_body->addWidget(widget, grows ? 1 : 0);
+    keepSpacerLast();
 }
 
 void StatsCard::addLayout(QLayout* layout)
 {
-    m_body->addLayout(layout);
+    m_body->addLayout(layout, layout->expandingDirections() & Qt::Vertical ? 1 : 0);
+    keepSpacerLast();
+}
+
+void StatsCard::keepSpacerLast()
+{
+    m_body->removeItem(m_spacer);
+    m_body->addItem(m_spacer);
 }
 
 void StatsCard::paintEvent(QPaintEvent* /*event*/)
@@ -898,130 +912,171 @@ int FlowLayout::layoutItems(const QRect& rect, bool apply) const
     return y + rowHeight - rect.y() + margins.bottom();
 }
 
-MasonryLayout::MasonryLayout(QWidget* parent, int spacing, int minColumnWidth, int maxColumns)
+RowGridLayout::RowGridLayout(QWidget* parent, int spacing, int minColumnWidth)
     : QLayout{parent}
     , m_spacing{spacing}
     , m_minColumnWidth{minColumnWidth}
-    , m_maxColumns{maxColumns}
-    , m_nextSpanning{false}
 { }
 
-MasonryLayout::~MasonryLayout()
+RowGridLayout::~RowGridLayout()
 {
     while(QLayoutItem* item = takeAt(0)) {
         delete item;
     }
 }
 
-void MasonryLayout::addSpanningWidget(QWidget* widget)
+void RowGridLayout::addRow(QWidget* first, QWidget* second)
 {
-    m_nextSpanning = true;
-    addWidget(widget);
-}
-
-void MasonryLayout::addItem(QLayoutItem* item)
-{
-    m_entries.push_back({item, std::exchange(m_nextSpanning, false)});
-}
-
-int MasonryLayout::count() const
-{
-    return static_cast<int>(m_entries.size());
-}
-
-QLayoutItem* MasonryLayout::itemAt(int index) const
-{
-    return index >= 0 && index < count() ? m_entries[static_cast<size_t>(index)].item : nullptr;
-}
-
-QLayoutItem* MasonryLayout::takeAt(int index)
-{
-    if(index < 0 || index >= count()) {
-        return nullptr;
+    if(!first) {
+        std::swap(first, second);
+    }
+    if(!first) {
+        return;
     }
 
-    QLayoutItem* item = m_entries[static_cast<size_t>(index)].item;
-    m_entries.erase(m_entries.begin() + index);
-    return item;
+    addChildWidget(first);
+    Row row{.first = new QWidgetItem(first), .second = nullptr};
+    if(second) {
+        addChildWidget(second);
+        row.second = new QWidgetItem(second);
+    }
+    m_rows.push_back(row);
+    invalidate();
 }
 
-Qt::Orientations MasonryLayout::expandingDirections() const
+void RowGridLayout::addItem(QLayoutItem* item)
+{
+    m_rows.push_back({.first = item, .second = nullptr});
+}
+
+int RowGridLayout::count() const
+{
+    int count{0};
+    for(const Row& row : m_rows) {
+        count += (row.first ? 1 : 0) + (row.second ? 1 : 0);
+    }
+    return count;
+}
+
+QLayoutItem* RowGridLayout::itemAt(int index) const
+{
+    int position{0};
+    for(const Row& row : m_rows) {
+        for(QLayoutItem* item : {row.first, row.second}) {
+            if(item && position++ == index) {
+                return item;
+            }
+        }
+    }
+    return nullptr;
+}
+
+QLayoutItem* RowGridLayout::takeAt(int index)
+{
+    int position{0};
+    for(auto it = m_rows.begin(); it != m_rows.end(); ++it) {
+        for(QLayoutItem** slot : {&it->first, &it->second}) {
+            if(*slot && position++ == index) {
+                QLayoutItem* item = *slot;
+                *slot             = nullptr;
+                if(!it->first && !it->second) {
+                    m_rows.erase(it);
+                }
+                invalidate();
+                return item;
+            }
+        }
+    }
+    return nullptr;
+}
+
+Qt::Orientations RowGridLayout::expandingDirections() const
 {
     return Qt::Horizontal;
 }
 
-bool MasonryLayout::hasHeightForWidth() const
+bool RowGridLayout::hasHeightForWidth() const
 {
     return true;
 }
 
-int MasonryLayout::heightForWidth(int width) const
+int RowGridLayout::heightForWidth(int width) const
 {
     return layoutItems(QRect{0, 0, width, 0}, false);
 }
 
-void MasonryLayout::setGeometry(const QRect& rect)
+void RowGridLayout::setGeometry(const QRect& rect)
 {
     QLayout::setGeometry(rect);
     layoutItems(rect, true);
 }
 
-QSize MasonryLayout::sizeHint() const
+QSize RowGridLayout::sizeHint() const
 {
-    const int width = m_minColumnWidth;
-    return {width, heightForWidth(width)};
+    return {m_minColumnWidth, heightForWidth(m_minColumnWidth)};
 }
 
-QSize MasonryLayout::minimumSize() const
+QSize RowGridLayout::minimumSize() const
 {
     QSize size;
-    for(const Entry& entry : m_entries) {
-        size = size.expandedTo(entry.item->minimumSize());
+    for(const Row& row : m_rows) {
+        for(const QLayoutItem* item : {row.first, row.second}) {
+            if(item) {
+                size = size.expandedTo(item->minimumSize());
+            }
+        }
     }
     const QMargins margins = contentsMargins();
     return size + QSize{margins.left() + margins.right(), margins.top() + margins.bottom()};
 }
 
-int MasonryLayout::layoutItems(const QRect& rect, bool apply) const
+int RowGridLayout::layoutItems(const QRect& rect, bool apply) const
 {
     const QMargins margins = contentsMargins();
     const QRect inner      = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom());
 
-    const int columns     = std::clamp((inner.width() + m_spacing) / (m_minColumnWidth + m_spacing), 1, m_maxColumns);
-    const int columnWidth = (inner.width() - m_spacing * (columns - 1)) / columns;
+    // Two columns once each has room for its minimum width
+    const bool twoColumns = inner.width() >= m_minColumnWidth * 2 + m_spacing;
+    const int columnWidth = twoColumns ? (inner.width() - m_spacing) / 2 : inner.width();
 
     const auto heightFor = [](QLayoutItem* item, int width) {
         return item->hasHeightForWidth() ? item->heightForWidth(width) : item->sizeHint().height();
     };
 
-    // How far down each column has been filled
-    std::vector<int> filled(static_cast<size_t>(columns), 0);
-    for(const Entry& entry : m_entries) {
-        if(entry.item->isEmpty()) {
-            continue;
-        }
-
-        if(entry.spanning) {
-            const int top    = *std::ranges::max_element(filled);
-            const int height = heightFor(entry.item, inner.width());
-            if(apply) {
-                entry.item->setGeometry(QRect{inner.x(), inner.y() + top, inner.width(), height});
-            }
-            std::ranges::fill(filled, top + height + m_spacing);
-            continue;
-        }
-
-        const auto column = static_cast<int>(std::ranges::min_element(filled) - filled.begin());
-        const int height  = heightFor(entry.item, columnWidth);
+    int y{inner.y()};
+    const auto place = [&](QLayoutItem* item, int x, int width, int height) {
         if(apply) {
-            entry.item->setGeometry(QRect{inner.x() + column * (columnWidth + m_spacing),
-                                          inner.y() + filled[static_cast<size_t>(column)], columnWidth, height});
+            item->setGeometry(QRect{x, y, width, height});
         }
-        filled[static_cast<size_t>(column)] += height + m_spacing;
+    };
+
+    for(const Row& row : m_rows) {
+        if(!row.first) {
+            continue;
+        }
+
+        if(!row.second) {
+            const int height = heightFor(row.first, inner.width());
+            place(row.first, inner.x(), inner.width(), height);
+            y += height + m_spacing;
+        }
+        else if(twoColumns) {
+            // Both cards are as tall as the taller, so the rows line up
+            const int height = std::max(heightFor(row.first, columnWidth), heightFor(row.second, columnWidth));
+            place(row.first, inner.x(), columnWidth, height);
+            place(row.second, inner.x() + columnWidth + m_spacing, columnWidth, height);
+            y += height + m_spacing;
+        }
+        else {
+            for(QLayoutItem* item : {row.first, row.second}) {
+                const int height = heightFor(item, inner.width());
+                place(item, inner.x(), inner.width(), height);
+                y += height + m_spacing;
+            }
+        }
     }
 
-    const int used = std::max(0, *std::ranges::max_element(filled) - m_spacing);
-    return used + margins.top() + margins.bottom();
+    return std::max(0, y - m_spacing - rect.y()) + margins.bottom();
 }
 
 TileLayout::TileLayout(int minTileWidth, int spacing)
