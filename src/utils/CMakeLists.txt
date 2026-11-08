@@ -30,7 +30,9 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/include/utils/jsonutils.h
     ${CMAKE_SOURCE_DIR}/include/utils/lockfreeringbuffer.h
     ${CMAKE_SOURCE_DIR}/include/utils/logging/messagehandler.h
+    ${CMAKE_SOURCE_DIR}/include/utils/lovesymbols.h
     ${CMAKE_SOURCE_DIR}/include/utils/modelutils.h
+    ${CMAKE_SOURCE_DIR}/include/utils/ratingsymbols.h
     ${CMAKE_SOURCE_DIR}/include/utils/scopeguard.h
     ${CMAKE_SOURCE_DIR}/include/utils/settings/advancedsettingsregistry.h
     ${CMAKE_SOURCE_DIR}/include/utils/settings/settingsdialogcontroller.h
@@ -77,10 +79,6 @@ set(SOURCES
     id.cpp
     itemregistry.cpp
     jsonutils.cpp
-    logging/logmodel.cpp
-    logging/logmodel.h
-    logging/logwidget.cpp
-    logging/logwidget.h
     logging/messagehandler.cpp
     modelutils.cpp
     settings/advancedsettingsregistry.cpp

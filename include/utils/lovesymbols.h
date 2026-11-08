@@ -22,35 +22,20 @@
 #include <QString>
 
 namespace Fooyin {
-struct RatingStarSymbols
+struct LoveSymbols
 {
-    QString fullStarSymbol;
-    QString halfStarSymbol;
-    QString emptyStarSymbol;
+    QString lovedSymbol;
+    QString unlovedSymbol;
+
+    friend bool operator==(const LoveSymbols&, const LoveSymbols&) = default;
 };
 
-[[nodiscard]] inline const RatingStarSymbols& defaultRatingStarSymbols()
+inline const LoveSymbols& defaultLoveSymbols()
 {
-    static const RatingStarSymbols Symbols{
-        QString{QChar{u'\u2605'}},
-        QString{QChar{u'\u2BEA'}},
-        QString{QChar{u'\u2606'}},
+    static const LoveSymbols Symbols{
+        .lovedSymbol   = QString{QChar{u'\u2665'}},
+        .unlovedSymbol = QString{QChar{u'\u2661'}},
     };
     return Symbols;
-}
-
-[[nodiscard]] inline const QString& defaultRatingFullStarSymbol()
-{
-    return defaultRatingStarSymbols().fullStarSymbol;
-}
-
-[[nodiscard]] inline const QString& defaultRatingHalfStarSymbol()
-{
-    return defaultRatingStarSymbols().halfStarSymbol;
-}
-
-[[nodiscard]] inline const QString& defaultRatingEmptyStarSymbol()
-{
-    return defaultRatingStarSymbols().emptyStarSymbol;
 }
 } // namespace Fooyin

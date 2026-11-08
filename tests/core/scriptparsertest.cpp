@@ -18,17 +18,18 @@
  */
 
 #include <core/constants.h>
-#include <core/ratingsymbols.h>
 #include <core/scripting/scriptparser.h>
 #include <core/scripting/scriptregistry.h>
 #include <core/scripting/scriptscanner.h>
 #include <core/scripting/scripttrackwriter.h>
 #include <core/scripting/trackqueryfilter.h>
 #include <core/track.h>
+#include <utils/ratingsymbols.h>
 
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QTemporaryDir>
 
 #include <array>
 #include <future>
@@ -314,6 +315,70 @@ TEST_F(ScriptParserTest, CapsTest)
     EXPECT_TRUE(m_parser.evaluate(uR"($caps(""))"_s).isEmpty());
 }
 
+TEST_F(ScriptParserTest, DirectoryLevels)
+{
+    const QDir root    = QDir::root();
+    const QString path = root.filePath(u"home/user/Music/Artist/Album/Disc"_s);
+    const Track track{QDir{path}.filePath(u"song.flac"_s)};
+
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(%filepath%)"_s, track));
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(%filepath%,1)"_s, track));
+    EXPECT_EQ(u"Album", m_parser.evaluate(u"$directory(%filepath%,2)"_s, track));
+    EXPECT_EQ(u"Artist", m_parser.evaluate(u"$directory(%filepath%,3)"_s, track));
+    EXPECT_EQ(u"home", m_parser.evaluate(u"$directory(%filepath%,6)"_s, track));
+    EXPECT_EQ(u"home", m_parser.evaluate(u"$directory(%filepath%,-1)"_s, track));
+    EXPECT_EQ(u"user", m_parser.evaluate(u"$directory(%filepath%,-2)"_s, track));
+    EXPECT_EQ(u"Music", m_parser.evaluate(u"$directory(%filepath%,-3)"_s, track));
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(%filepath%,-6)"_s, track));
+    EXPECT_EQ(u"Album", m_parser.evaluate(u"$directory(%path%,1)"_s, track));
+    EXPECT_TRUE(m_parser.evaluate(u"$directory(%filepath%,-7)"_s, track).isEmpty());
+
+    EXPECT_EQ(path, m_parser.evaluate(u"$directory_path(%filepath%)"_s, track));
+    EXPECT_EQ(path, m_parser.evaluate(u"$directory_path(%filepath%,1)"_s, track));
+    EXPECT_EQ(root.filePath(u"home/user/Music/Artist/Album"_s),
+              m_parser.evaluate(u"$directory_path(%filepath%,2)"_s, track));
+    EXPECT_EQ(root.filePath(u"home/user/Music/Artist"_s), m_parser.evaluate(u"$directory_path(%filepath%,3)"_s, track));
+    EXPECT_EQ(root.filePath(u"home"_s), m_parser.evaluate(u"$directory_path(%filepath%,6)"_s, track));
+    EXPECT_EQ(root.filePath(u"home"_s), m_parser.evaluate(u"$directory_path(%filepath%,-1)"_s, track));
+    EXPECT_EQ(root.filePath(u"home/user"_s), m_parser.evaluate(u"$directory_path(%filepath%,-2)"_s, track));
+    EXPECT_EQ(root.filePath(u"home/user/Music"_s), m_parser.evaluate(u"$directory_path(%filepath%,-3)"_s, track));
+    EXPECT_EQ(path, m_parser.evaluate(u"$directory_path(%filepath%,-6)"_s, track));
+}
+
+TEST_F(ScriptParserTest, DirectoryPathsNormaliseRelativePathsAndSeparators)
+{
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(Artist//Album/../Album/Disc/song.flac)"_s));
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(Artist//Album/../Album/Disc/song.flac,1)"_s));
+    EXPECT_EQ(u"Album", m_parser.evaluate(u"$directory(Artist//Album/../Album/Disc/song.flac,2)"_s));
+    EXPECT_EQ(QDir::current().dirName(), m_parser.evaluate(u"$directory(song.flac)"_s));
+    EXPECT_EQ(QDir::currentPath(), m_parser.evaluate(u"$directory_path(song.flac)"_s));
+    EXPECT_EQ(QDir::current().absoluteFilePath(u"Artist/Album/Disc"_s),
+              m_parser.evaluate(u"$directory_path(Artist//Album/../Album/Disc/song.flac,1)"_s));
+    EXPECT_EQ(QDir::current().absoluteFilePath(u"Artist/Album"_s),
+              m_parser.evaluate(u"$directory_path(Artist//Album/../Album/Disc/song.flac,2)"_s));
+    EXPECT_EQ(u"Disc", m_parser.evaluate(u"$directory(Artist//Album/../Album/Disc/,1)"_s));
+    EXPECT_EQ(u"Album", m_parser.evaluate(u"$directory(Artist//Album/../Album/Disc/,2)"_s));
+    EXPECT_EQ(QDir::current().absoluteFilePath(u"Artist/Album/Disc"_s),
+              m_parser.evaluate(u"$directory_path(Artist//Album/../Album/Disc/)"_s));
+    EXPECT_EQ(QDir::current().absoluteFilePath(u"Artist/Album"_s),
+              m_parser.evaluate(u"$directory_path(Artist//Album/../Album/Disc/,2)"_s));
+
+#ifdef Q_OS_WIN
+    EXPECT_EQ(u"Disc", m_parser.evaluate(uR"($directory("D:\\Music\\Artist\\Album\\Disc\\song.flac"))"_s));
+    EXPECT_EQ(u"Album", m_parser.evaluate(uR"($directory("D:\\Music\\Artist\\Album\\Disc\\song.flac",2))"_s));
+    EXPECT_EQ(u"D:/Music/Artist/Album/Disc",
+              m_parser.evaluate(uR"($directory_path("D:\\Music\\Artist\\Album\\Disc\\song.flac",1))"_s));
+    EXPECT_EQ(u"Album", m_parser.evaluate(uR"($directory("D:\\Music\\Artist\\Album\\Disc\\",2))"_s));
+    EXPECT_EQ(u"D:/Music/Artist", m_parser.evaluate(uR"($directory_path("D:\\Music\\Artist\\Album\\Disc\\",3))"_s));
+    EXPECT_EQ(u"Music", m_parser.evaluate(uR"($directory("D:\\Music\\Artist\\Album\\Disc\\",-1))"_s));
+    EXPECT_EQ(u"D:/Music/Artist", m_parser.evaluate(uR"($directory_path("D:\\Music\\Artist\\Album\\Disc\\",-2))"_s));
+    EXPECT_EQ(u"Artist", m_parser.evaluate(u"$directory(//server/share/Music/Artist/Album/song.flac,-2)"_s));
+    EXPECT_EQ(u"Album", m_parser.evaluate(u"$directory(//server/share/Music/Artist/Album/song.flac,-3)"_s));
+    EXPECT_TRUE(m_parser.evaluate(u"$directory(//server/share/Music/Artist/Album/song.flac,-4)"_s).isEmpty());
+    EXPECT_EQ(u"//server/share/Music", m_parser.evaluate(u"$directory_path(//server/share/Music/Artist/Album,-1)"_s));
+#endif
+}
+
 TEST_F(ScriptParserTest, ApplicationLinkTest)
 {
     EXPECT_EQ(uR"(<a href="fooyin://application/run?application=player">Player</a>)",
@@ -542,6 +607,22 @@ TEST_F(ScriptParserTest, MetadataTest)
     EXPECT_EQ(u"true", m_parser.evaluate(u"$if(%replaygain_album_gain%,true,false)"_s, track));
 
     EXPECT_EQ(u" - 7", m_parser.evaluate(u"[%disc% - %track%]"_s, track));
+}
+
+TEST_F(ScriptParserTest, TrackClassificationTest)
+{
+    const Track local{u"/music/track.flac"_s};
+    const Track remote{u"https://example.com/stream"_s};
+    const Track virtualTrack{u"cdda:///disc"_s};
+    const QString archivePath = u"/music/archive.zip"_s;
+    const Track archived{u"unpack://zip|%1|file://%2!track.flac"_s.arg(archivePath.size()).arg(archivePath)};
+    const QString sourceFlags = u"$if(%isremote%,remote,local)$if(%isvirtual%, virtual)$if(%isinarchive%, archive)"_s;
+
+    EXPECT_EQ(u"local", m_parser.evaluate(sourceFlags, local));
+    EXPECT_EQ(u"remote", m_parser.evaluate(sourceFlags, remote));
+    EXPECT_EQ(u"local virtual", m_parser.evaluate(sourceFlags, virtualTrack));
+    EXPECT_EQ(u"local archive", m_parser.evaluate(sourceFlags, archived));
+    EXPECT_EQ(u"", m_parser.evaluate(u"%isremote%%isvirtual%%isinarchive%"_s));
 }
 
 TEST_F(ScriptParserTest, RegexTest)

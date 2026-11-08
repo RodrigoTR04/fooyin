@@ -26,6 +26,7 @@
 #include "playbackprogresstracker.h"
 #include "playbacksession.h"
 #include "playbackstatestore.h"
+#include "trackplaybacksettings.h"
 
 #include <core/coresettings.h>
 #include <core/library/libraryutils.h>
@@ -544,7 +545,9 @@ void PlayerControllerPrivate::emitUpcomingTrackChangedIfNeeded()
 
     const bool upcomingChanged
         = m_lastUpcomingTrack.track != upcoming.track || m_lastUpcomingTrack.isQueueTrack != upcoming.isQueueTrack
-       || m_lastUpcomingTrack.queueItemId != upcoming.queueItemId || m_lastUpcomingTrack.itemId != upcoming.itemId;
+       || m_lastUpcomingTrack.queueItemId != upcoming.queueItemId || m_lastUpcomingTrack.itemId != upcoming.itemId
+       || TrackPlayback::crossfadingDisabled(m_lastUpcomingTrack.track.track)
+              != TrackPlayback::crossfadingDisabled(upcoming.track.track);
 
     if(!upcomingChanged) {
         return;
@@ -1829,15 +1832,34 @@ void PlayerController::commitCurrentTrack(const PlaylistTrack& track, const Play
     });
 }
 
+bool PlayerController::rejectTrackChange(uint64_t itemId)
+{
+    if(!p->m_session.rejectPendingRequest(itemId)) {
+        return false;
+    }
+
+    p->emitUpcomingTrackChangedIfNeeded();
+    return true;
+}
+
 void PlayerController::updateCurrentTrack(const Track& track)
 {
     if(p->m_session.updateCurrentTrack(track)) {
+        const bool durationChanged = p->m_progressTracker.totalDuration() != track.duration();
+        if(durationChanged) {
+            p->m_progressTracker.updateDuration(track.duration(),
+                                                p->m_settings->value<Settings::Core::PlayedThreshold>(),
+                                                p->m_settings->value<Settings::Core::PlayedThresholdTime>());
+        }
         const auto range = p->m_abRepeatRange;
         if((range.start && *range.start >= track.duration()) || (range.end && *range.end > track.duration())) {
             clearABRepeat();
         }
         Q_EMIT currentTrackUpdated(p->m_session.currentTrack().track);
         Q_EMIT playlistTrackUpdated(p->m_session.currentTrack());
+        if(durationChanged) {
+            Q_EMIT playbackSnapshotChanged(playbackSnapshot());
+        }
     }
 }
 

@@ -19,17 +19,20 @@
 
 #include "filterwidget.h"
 
+#include "expansion/filterexpansionwidget.h"
 #include "filtercolumneditordialog.h"
 #include "filtercolumnregistry.h"
 #include "filterconfigwidget.h"
+#include "filterconstants.h"
 #include "filterdelegate.h"
-#include "filterexpansionwidget.h"
 #include "filteritem.h"
 #include "filtermodel.h"
 #include "filterview.h"
+#include "internalguisettings.h"
 
 #include <core/coresettings.h>
 #include <core/library/librarymanager.h>
+#include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
 #include <core/plugins/coreplugincontext.h>
 #include <gui/coverprovider.h>
@@ -58,6 +61,8 @@
 #include <QMenu>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 #include <QTimerEvent>
 
 #include <set>
@@ -66,26 +71,31 @@ Q_LOGGING_CATEGORY(FILTER_WIDGET_TRACE, "fy.trace.filters.widget", QtInfoMsg)
 
 using namespace Qt::StringLiterals;
 
-constexpr auto FilterDoubleClickKey       = u"Filters/DoubleClickBehaviour";
-constexpr auto FilterMiddleClickKey       = u"Filters/MiddleClickBehaviour";
-constexpr auto FilterPlaylistEnabledKey   = u"Filters/SelectionPlaylistEnabled";
-constexpr auto FilterAutoSwitchKey        = u"Filters/AutoSwitchSelectionPlaylist";
-constexpr auto FilterAutoPlaylistKey      = u"Filters/SelectionPlaylistName";
-constexpr auto FilterRestoreStateKey      = u"Filters/RestoreState";
-constexpr auto FilterRowHeightKey         = u"Filters/RowHeight";
-constexpr auto FilterSendPlaybackKey      = u"Filters/StartPlaybackOnSend";
-constexpr auto FilterSourceKey            = u"Filters/Source";
-constexpr auto FilterKeepAliveKey         = u"Filters/KeepAlive";
-constexpr auto FilterIconSizeKey          = u"Filters/IconSize";
-constexpr auto FilterAutoFitArtworkKey    = u"Filters/AutoFitArtwork";
-constexpr auto FilterIconHorizontalGapKey = u"Filters/IconHorizontalGap";
-constexpr auto FilterIconVerticalGapKey   = u"Filters/IconVerticalGap";
-constexpr auto FilterArtworkRadiusKey     = u"Filters/ArtworkCornerRadius";
-constexpr auto FilterArtworkMarginsKey    = u"Filters/ArtworkMargins";
+constexpr auto FilterDoubleClickKey            = u"Filters/DoubleClickBehaviour";
+constexpr auto FilterMiddleClickKey            = u"Filters/MiddleClickBehaviour";
+constexpr auto FilterPlaylistEnabledKey        = u"Filters/SelectionPlaylistEnabled";
+constexpr auto FilterAutoSwitchKey             = u"Filters/AutoSwitchSelectionPlaylist";
+constexpr auto FilterAutoPlaylistKey           = u"Filters/SelectionPlaylistName";
+constexpr auto FilterRestoreStateKey           = u"Filters/RestoreState";
+constexpr auto FilterRowHeightKey              = u"Filters/RowHeight";
+constexpr auto FilterSendPlaybackKey           = u"Filters/StartPlaybackOnSend";
+constexpr auto FilterSourceKey                 = u"Filters/Source";
+constexpr auto FilterKeepAliveKey              = u"Filters/KeepAlive";
+constexpr auto FilterIconSizeKey               = u"Filters/IconSize";
+constexpr auto FilterAutoFitArtworkKey         = u"Filters/AutoFitArtwork";
+constexpr auto FilterIconHorizontalGapKey      = u"Filters/IconHorizontalGap";
+constexpr auto FilterIconVerticalGapKey        = u"Filters/IconVerticalGap";
+constexpr auto FilterArtworkRadiusKey          = u"Filters/ArtworkCornerRadius";
+constexpr auto FilterOverrideArtworkMarginsKey = u"Filters/OverrideArtworkMargins";
+constexpr auto FilterArtworkMarginsKey         = u"Filters/ArtworkMargins";
+constexpr auto FilterOverrideGridMarginsKey    = u"Filters/OverrideGridMargins";
+constexpr auto FilterGridMarginsKey            = u"Filters/GridMargins";
 
 constexpr auto FilterExpandGroupsKey                = u"Filters/ExpandGroups";
 constexpr auto FilterExpansionAnimatedKey           = u"Filters/ExpansionAnimated";
+constexpr auto FilterExpansionAnimationDurationKey  = u"Filters/ExpansionAnimationDuration";
 constexpr auto FilterExpansionAlternatingRowsKey    = u"Filters/ExpansionAlternatingRows";
+constexpr auto FilterExpansionMatchGridMarginsKey   = u"Filters/ExpansionMatchGridMargins";
 constexpr auto FilterExpandedArtworkKey             = u"Filters/ExpandedArtwork";
 constexpr auto FilterExpansionDoubleClickKey        = u"Filters/ExpansionDoubleClickBehaviour";
 constexpr auto FilterExpansionMiddleClickKey        = u"Filters/ExpansionMiddleClickBehaviour";
@@ -105,6 +115,8 @@ constexpr auto FilterExpansionMinimumColumnWidthKey = u"Filters/ExpansionMinimum
 constexpr auto FilterExpansionScriptsKey            = u"Filters/ExpansionScripts";
 constexpr auto FilterExpansionPlayingRowFontKey     = u"Filters/ExpansionPlayingRowFont";
 constexpr auto FilterExpansionPlayingRowColourKey   = u"Filters/ExpansionPlayingRowColour";
+
+constexpr auto FilterCoverFlowKey = u"Filters/CoverFlow";
 
 constexpr auto FilterBackgroundKey                = u"Filters/Background";
 constexpr auto FilterExpansionBackgroundKey       = u"Filters/ExpansionBackground";
@@ -128,22 +140,6 @@ QString normaliseColour(const QString& value)
     const QColor colour{value};
     return colour.isValid() ? colour.name(QColor::HexArgb) : QString{};
 }
-
-QMargins artworkMarginsFromJson(const QJsonObject& object, const QMargins& fallback)
-{
-    return {std::clamp(object.value("Left"_L1).toInt(fallback.left()), 0, 999),
-            std::clamp(object.value("Top"_L1).toInt(fallback.top()), 0, 999),
-            std::clamp(object.value("Right"_L1).toInt(fallback.right()), 0, 999),
-            std::clamp(object.value("Bottom"_L1).toInt(fallback.bottom()), 0, 999)};
-}
-
-QJsonObject artworkMarginsToJson(const QMargins& margins)
-{
-    return {{"Left"_L1, margins.left()},
-            {"Top"_L1, margins.top()},
-            {"Right"_L1, margins.right()},
-            {"Bottom"_L1, margins.bottom()}};
-}
 } // namespace
 
 FilterWidget::FilterWidget(ActionManager* actionManager, FilterColumnRegistry* columnRegistry,
@@ -153,6 +149,7 @@ FilterWidget::FilterWidget(ActionManager* actionManager, FilterColumnRegistry* c
     , m_actionManager{actionManager}
     , m_columnRegistry{columnRegistry}
     , m_libraryManager{core.libraryManager}
+    , m_library{core.library}
     , m_settings{core.settingsManager}
     , m_view{new FilterView(this)}
     , m_delegate{new FilterDelegate(this)}
@@ -160,10 +157,13 @@ FilterWidget::FilterWidget(ActionManager* actionManager, FilterColumnRegistry* c
     , m_model{new FilterModel(core.library, new CoverProvider(coverRepository, this), m_settings, this)}
     , m_sortProxy{new FilterSortModel(this)}
     , m_backgroundSource{new BackgroundImageSource(m_model->coverProvider(), core.playerController, selection, this)}
+    , m_group{}
+    , m_initialGroupPending{true}
     , m_index{-1}
     , m_multipleColumns{false}
     , m_widgetContext{new WidgetContext(
-          this, Context{IdList{Constants::Context::TrackSelection, Id{"Fooyin.Context.FilterWidget."}.append(id())}},
+          this,
+          Context{IdList{Fooyin::Constants::Context::TrackSelection, Id{"Fooyin.Context.FilterWidget."}.append(id())}},
           this)}
     , m_pendingScrollPosition{-1}
     , m_applyingViewState{false}
@@ -189,6 +189,7 @@ FilterWidget::FilterWidget(ActionManager* actionManager, FilterColumnRegistry* c
     m_view->setHeader(m_header);
     m_view->setItemDelegate(m_delegate);
     m_view->viewport()->installEventFilter(new ToolTipFilter(this));
+    QObject::connect(m_view, &FilterView::displayChanged, this, &FilterWidget::updateArtworkMargins);
     QObject::connect(m_view, &FilterView::displayChanged, this, &FilterWidget::filterUpdated);
     QObject::connect(m_view, &FilterView::displayChanged, this, [this]() { scheduleVisibleCoverPinUpdate(); });
 
@@ -203,6 +204,10 @@ FilterWidget::FilterWidget(ActionManager* actionManager, FilterColumnRegistry* c
     m_view->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
     m_view->setSelectBeforeDrag(m_settings->value<Settings::Gui::DragOnlyAfterSelect>());
     m_settings->subscribe<Settings::Gui::DragOnlyAfterSelect>(m_view, &FilterView::setSelectBeforeDrag);
+
+    m_delegate->setCoverFlowCacheSize(m_settings->value<Settings::Gui::Internal::CoverFlowCacheSize>());
+    m_settings->subscribe<Settings::Gui::Internal::CoverFlowCacheSize>(m_delegate,
+                                                                       &FilterDelegate::setCoverFlowCacheSize);
 
     m_header->setStretchEnabled(true);
     m_header->setSortIndicatorShown(true);
@@ -343,7 +348,8 @@ bool FilterWidget::hasSelection() const
 
 void FilterWidget::setGroup(const Id& group)
 {
-    m_group = group;
+    m_initialGroupPending = false;
+    m_group               = group;
 }
 
 void FilterWidget::setIndex(int index)
@@ -361,15 +367,26 @@ void FilterWidget::setViewState(const FilterViewState& state)
     m_restoredSelectedKeys    = state.selectedKeys;
     m_selectionRestorePending = state.selectionRestorePending;
 
+    auto* selectionModel = m_view->selectionModel();
+    const bool coverFlow = m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow;
+    QSignalBlocker blocker{selectionModel};
+    if(!coverFlow) {
+        blocker.unblock();
+    }
+
     const bool rowsChanged = m_model->setRows(m_columns, state.rows);
     traceSortState("Rows applied", true);
 
     if(state.scrollPolicy == FilterScrollPolicy::ResetIfChanged && rowsChanged && m_pendingScrollPosition < 0) {
-        m_view->scrollToTop();
+        if(coverFlow) {
+            m_view->horizontalScrollBar()->setValue(0);
+        }
+        else {
+            m_view->scrollToTop();
+        }
     }
 
-    auto* selectionModel = m_view->selectionModel();
-    const QSignalBlocker blocker{selectionModel};
+    blocker.reblock();
     selectionModel->clearSelection();
 
     const QModelIndexList selectedIndexes = m_model->indexesForKeys(state.selectedKeys);
@@ -467,7 +484,10 @@ void FilterWidget::saveLayoutData(QJsonObject& layout)
     if(m_config.restoreState && !m_expandedKey.isEmpty()) {
         layout["ExpandedKey"_L1] = QString::fromLatin1(m_expandedKey.toBase64());
     }
-    layout["ScrollPosition"_L1] = m_view->verticalScrollBar()->value();
+    layout["ScrollPosition"_L1]
+        = (m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow ? m_view->horizontalScrollBar()
+                                                                       : m_view->verticalScrollBar())
+              ->value();
 
     QByteArray state = m_header->saveHeaderState();
     state            = qCompress(state, 9);
@@ -541,7 +561,10 @@ void FilterWidget::loadLayoutData(const QJsonObject& layout)
     }
 
     if(layout.contains("Group"_L1)) {
-        m_group = Id{layout.value("Group"_L1).toString()};
+        setGroup(Id{layout.value("Group"_L1).toString()});
+    }
+    else if(m_initialGroupPending) {
+        setGroup(Id{"Default"});
     }
 
     m_index       = layout.value("Index"_L1).toInt(m_index);
@@ -589,6 +612,9 @@ void FilterWidget::finalise()
     }
 
     updateAppearance();
+    if(std::exchange(m_initialGroupPending, false)) {
+        Q_EMIT requestInitialGroup();
+    }
 }
 
 void FilterWidget::searchEvent(const SearchRequest& request)
@@ -630,14 +656,27 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
     config.iconHorizontalGap   = m_settings->fileValue(FilterIconHorizontalGapKey, config.iconHorizontalGap).toInt();
     config.iconVerticalGap     = m_settings->fileValue(FilterIconVerticalGapKey, config.iconVerticalGap).toInt();
     config.artworkCornerRadius = m_settings->fileValue(FilterArtworkRadiusKey, config.artworkCornerRadius).toInt();
-    config.artworkMargins      = artworkMarginsFromJson(
+    config.artworkMargins      = Gui::marginsFromJson(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterArtworkMarginsKey).toMap()), config.artworkMargins);
+    config.overrideArtworkMargins
+        = m_settings
+              ->fileValue(FilterOverrideArtworkMarginsKey, config.artworkMargins != factoryConfig().artworkMargins)
+              .toBool();
+    config.overrideGridMargins
+        = m_settings->fileValue(FilterOverrideGridMarginsKey, config.overrideGridMargins).toBool();
+    config.gridMargins = Gui::marginsFromJson(
+        QJsonObject::fromVariantMap(m_settings->fileValue(FilterGridMarginsKey).toMap()), config.gridMargins);
     config.expandGroups      = m_settings->fileValue(FilterExpandGroupsKey, config.expandGroups).toBool();
     config.expansionAnimated = m_settings->fileValue(FilterExpansionAnimatedKey, config.expansionAnimated).toBool();
+    config.expansionAnimationDuration = std::clamp(
+        m_settings->fileValue(FilterExpansionAnimationDurationKey, config.expansionAnimationDuration).toInt(), 50,
+        2000);
     config.expansionAlternatingRows
         = m_settings->fileValue(FilterExpansionAlternatingRowsKey, config.expansionAlternatingRows).toBool();
+    config.expansionMatchGridMargins
+        = m_settings->fileValue(FilterExpansionMatchGridMarginsKey, config.expansionMatchGridMargins).toBool();
     config.expandedArtwork         = m_settings->fileValue(FilterExpandedArtworkKey, config.expandedArtwork).toBool();
-    config.expansionArtworkMargins = artworkMarginsFromJson(
+    config.expansionArtworkMargins = Gui::marginsFromJson(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterExpansionArtworkMarginsKey).toMap()), {10, 10, 10, 10});
     config.expansionArtworkAutoMargins
         = m_settings->fileValue(FilterExpansionArtworkAutoMarginsKey, config.expansionArtworkAutoMargins).toBool();
@@ -672,6 +711,7 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
     config.expansionPlayingRowColour
         = m_settings->fileValue(FilterExpansionPlayingRowColourKey, config.expansionPlayingRowColour).toString();
 
+    config.coverFlow.load(QJsonObject::fromVariantMap(m_settings->fileValue(FilterCoverFlowKey).toMap()));
     config.background.loadLayout(QJsonObject::fromVariantMap(m_settings->fileValue(FilterBackgroundKey).toMap()));
     config.expansionBackground.loadLayout(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterExpansionBackgroundKey).toMap()));
@@ -721,13 +761,18 @@ void FilterWidget::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(FilterIconHorizontalGapKey, config.iconHorizontalGap);
     m_settings->fileSet(FilterIconVerticalGapKey, config.iconVerticalGap);
     m_settings->fileSet(FilterArtworkRadiusKey, config.artworkCornerRadius);
-    m_settings->fileSet(FilterArtworkMarginsKey, artworkMarginsToJson(config.artworkMargins).toVariantMap());
+    m_settings->fileSet(FilterOverrideArtworkMarginsKey, config.overrideArtworkMargins);
+    m_settings->fileSet(FilterArtworkMarginsKey, Gui::marginsToJson(config.artworkMargins).toVariantMap());
+    m_settings->fileSet(FilterOverrideGridMarginsKey, config.overrideGridMargins);
+    m_settings->fileSet(FilterGridMarginsKey, Gui::marginsToJson(config.gridMargins).toVariantMap());
     m_settings->fileSet(FilterExpandGroupsKey, config.expandGroups);
     m_settings->fileSet(FilterExpansionAnimatedKey, config.expansionAnimated);
+    m_settings->fileSet(FilterExpansionAnimationDurationKey, config.expansionAnimationDuration);
     m_settings->fileSet(FilterExpansionAlternatingRowsKey, config.expansionAlternatingRows);
+    m_settings->fileSet(FilterExpansionMatchGridMarginsKey, config.expansionMatchGridMargins);
     m_settings->fileSet(FilterExpandedArtworkKey, config.expandedArtwork);
     m_settings->fileSet(FilterExpansionArtworkMarginsKey,
-                        artworkMarginsToJson(config.expansionArtworkMargins).toVariantMap());
+                        Gui::marginsToJson(config.expansionArtworkMargins).toVariantMap());
     m_settings->fileSet(FilterExpansionArtworkAutoMarginsKey, config.expansionArtworkAutoMargins);
     m_settings->fileSet(FilterExpansionReflectionKey, config.expansionArtworkReflection);
     m_settings->fileSet(FilterExpansionReflectionHeightKey, config.expansionArtworkReflectionHeight);
@@ -743,6 +788,7 @@ void FilterWidget::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(FilterExpansionScriptsKey, config.expansionScripts.toJson().toVariantMap());
     m_settings->fileSet(FilterExpansionPlayingRowFontKey, config.expansionPlayingRowFont);
     m_settings->fileSet(FilterExpansionPlayingRowColourKey, config.expansionPlayingRowColour);
+    m_settings->fileSet(FilterCoverFlowKey, config.coverFlow.toJson().toVariantMap());
 
     QJsonObject background;
     config.background.saveLayout(background);
@@ -782,10 +828,15 @@ void FilterWidget::clearSavedDefaults() const
     m_settings->fileRemove(FilterIconHorizontalGapKey);
     m_settings->fileRemove(FilterIconVerticalGapKey);
     m_settings->fileRemove(FilterArtworkRadiusKey);
+    m_settings->fileRemove(FilterOverrideArtworkMarginsKey);
     m_settings->fileRemove(FilterArtworkMarginsKey);
+    m_settings->fileRemove(FilterOverrideGridMarginsKey);
+    m_settings->fileRemove(FilterGridMarginsKey);
     m_settings->fileRemove(FilterExpandGroupsKey);
     m_settings->fileRemove(FilterExpansionAnimatedKey);
+    m_settings->fileRemove(FilterExpansionAnimationDurationKey);
     m_settings->fileRemove(FilterExpansionAlternatingRowsKey);
+    m_settings->fileRemove(FilterExpansionMatchGridMarginsKey);
     m_settings->fileRemove(FilterExpandedArtworkKey);
     m_settings->fileRemove(FilterExpansionArtworkMarginsKey);
     m_settings->fileRemove(FilterExpansionArtworkAutoMarginsKey);
@@ -806,6 +857,7 @@ void FilterWidget::clearSavedDefaults() const
     m_settings->fileRemove(FilterBackgroundKey);
     m_settings->fileRemove(FilterExpansionBackgroundKey);
     m_settings->fileRemove(FilterExpansionBackgroundColourKey);
+    m_settings->fileRemove(FilterCoverFlowKey);
     m_settings->fileRemove(FilterDisplayKey);
     m_settings->fileRemove(FilterCaptionsKey);
     m_settings->fileRemove(FilterArtworkKey);
@@ -820,6 +872,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
 {
     auto validated{config};
 
+    validated.coverFlow.normalise();
     validated.background.normalise();
     validated.expansionBackground.normalise();
     validated.expansionBackground.fadeDuration = 0;
@@ -829,12 +882,13 @@ void FilterWidget::applyConfig(const ConfigData& config)
     if(validated.source != FilterSource::Library && validated.source != FilterSource::CurrentPlaylist) {
         validated.source = FilterSource::Library;
     }
-    if(validated.viewMode != ExpandedTreeView::ViewMode::Tree
-       && validated.viewMode != ExpandedTreeView::ViewMode::Icon) {
+    if(validated.viewMode != ExpandedTreeView::ViewMode::Tree && validated.viewMode != ExpandedTreeView::ViewMode::Icon
+       && validated.viewMode != ExpandedTreeView::ViewMode::CoverFlow) {
         validated.viewMode = ExpandedTreeView::ViewMode::Tree;
     }
     if(validated.captionDisplay != ExpandedTreeView::CaptionDisplay::None
        && validated.captionDisplay != ExpandedTreeView::CaptionDisplay::Bottom
+       && validated.captionDisplay != ExpandedTreeView::CaptionDisplay::Overlay
        && validated.captionDisplay != ExpandedTreeView::CaptionDisplay::Right) {
         validated.captionDisplay = ExpandedTreeView::CaptionDisplay::Bottom;
     }
@@ -851,13 +905,19 @@ void FilterWidget::applyConfig(const ConfigData& config)
     validated.iconHorizontalGap   = std::max(validated.iconHorizontalGap, -1);
     validated.iconVerticalGap     = std::max(validated.iconVerticalGap, 0);
     validated.artworkCornerRadius = std::clamp(validated.artworkCornerRadius, 0, 100);
-    validated.artworkMargins      = artworkMarginsFromJson({}, validated.artworkMargins);
+    validated.artworkMargins      = Gui::marginsFromJson({}, validated.artworkMargins);
+    validated.gridMargins         = Gui::marginsFromJson({}, validated.gridMargins);
 
     if(!validated.iconSize.isValid()) {
         validated.iconSize = factoryConfig().iconSize;
     }
+    const int minIconSize = Constants::minimumIconSize(validated.viewMode, validated.captionDisplay);
+    const int maxIconSize = Constants::maximumIconSize(validated.viewMode);
+    validated.iconSize
+        = validated.iconSize.expandedTo({minIconSize, minIconSize}).boundedTo({maxIconSize, maxIconSize});
 
-    validated.expansionArtworkMargins           = artworkMarginsFromJson({}, validated.expansionArtworkMargins);
+    validated.expansionAnimationDuration        = std::clamp(validated.expansionAnimationDuration, 50, 2000);
+    validated.expansionArtworkMargins           = Gui::marginsFromJson({}, validated.expansionArtworkMargins);
     validated.expansionArtworkSize              = std::clamp(validated.expansionArtworkSize, 50, 200);
     validated.expansionArtworkReflectionHeight  = std::clamp(validated.expansionArtworkReflectionHeight, 1, 100);
     validated.expansionArtworkReflectionOpacity = std::clamp(validated.expansionArtworkReflectionOpacity, 0, 100);
@@ -876,6 +936,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
                                 || m_config.expansionBackground != validated.expansionBackground
                                 || m_config.expansionBackgroundColour != validated.expansionBackgroundColour;
     const bool layoutChanged     = m_config.expansionMinimumRows != validated.expansionMinimumRows
+                                || m_config.expansionMatchGridMargins != validated.expansionMatchGridMargins
                                 || m_config.expansionMaximumColumns != validated.expansionMaximumColumns
                                 || m_config.expansionStretchColumns != validated.expansionStretchColumns
                                 || m_config.expansionMinimumColumnWidth != validated.expansionMinimumColumnWidth
@@ -889,7 +950,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
                                 || m_config.expansionArtworkAutoMargins != validated.expansionArtworkAutoMargins
                                 || m_config.expansionArtworkMargins != validated.expansionArtworkMargins;
     const bool hasConfigChanged
-        = m_config.doubleClickAction != validated.doubleClickAction
+        = m_config.coverFlow != validated.coverFlow || m_config.doubleClickAction != validated.doubleClickAction
        || m_config.expansionDoubleClickAction != validated.expansionDoubleClickAction
        || m_config.expansionMiddleClickAction != validated.expansionMiddleClickAction
        || m_config.middleClickAction != validated.middleClickAction || m_config.sendPlayback != validated.sendPlayback
@@ -901,9 +962,12 @@ void FilterWidget::applyConfig(const ConfigData& config)
        || m_config.autoFitArtwork != validated.autoFitArtwork
        || m_config.iconHorizontalGap != validated.iconHorizontalGap
        || m_config.iconVerticalGap != validated.iconVerticalGap
+       || m_config.overrideGridMargins != validated.overrideGridMargins || m_config.gridMargins != validated.gridMargins
        || m_config.artworkCornerRadius != validated.artworkCornerRadius
+       || m_config.overrideArtworkMargins != validated.overrideArtworkMargins
        || m_config.artworkMargins != validated.artworkMargins || m_config.expandGroups != validated.expandGroups
        || m_config.expansionAnimated != validated.expansionAnimated
+       || m_config.expansionAnimationDuration != validated.expansionAnimationDuration
        || m_config.expandedArtwork != validated.expandedArtwork
        || m_config.expansionScripts != validated.expansionScripts
        || m_config.expansionPlayingRowFont != validated.expansionPlayingRowFont
@@ -915,11 +979,13 @@ void FilterWidget::applyConfig(const ConfigData& config)
 
     m_config = std::move(validated);
 
+    m_view->setAutoFitArtwork(m_config.autoFitArtwork);
+
     if(m_view->viewMode() != m_config.viewMode) {
         updateViewMode(m_config.viewMode);
     }
 
-    m_model->setShowDecoration(m_config.viewMode == ExpandedTreeView::ViewMode::Icon);
+    m_model->setShowDecoration(m_config.viewMode != ExpandedTreeView::ViewMode::Tree);
     updateCaptions(m_config.captionDisplay);
     m_model->setCoverType(m_config.coverType);
     m_model->setCoverSource(m_config.coverSource);
@@ -927,9 +993,14 @@ void FilterWidget::applyConfig(const ConfigData& config)
     m_header->setCollapsed(!m_config.showHeader);
     m_view->setCollapseDelayEnabled(doubleClickAction() != TrackAction::None);
     m_view->setExpansionAnimated(m_config.expansionAnimated);
+    m_view->setExpansionAnimationDuration(m_config.expansionAnimationDuration);
+    m_view->setExpansionMatchGridMargins(m_config.expansionMatchGridMargins);
     m_view->setBackgroundConfig(m_config.background);
+    m_view->setCoverFlowSettings(m_config.coverFlow);
     m_backgroundSource->setConfig(m_config.background);
+
     updateAppearance();
+    scheduleVisibleCoverPinUpdate();
 
     if(m_expansion) {
         m_expansion->setBackground(m_config.expansionBackground, m_config.expansionBackgroundColour);
@@ -937,11 +1008,23 @@ void FilterWidget::applyConfig(const ConfigData& config)
     }
 
     m_model->setRowHeight(m_config.rowHeight);
-    m_view->setAutoFitArtwork(m_config.autoFitArtwork);
+    {
+        const QSignalBlocker blocker{m_view};
+        m_view->setMinimumIconSize({minIconSize, minIconSize});
+        m_view->setMaximumIconSize({maxIconSize, maxIconSize});
+    }
     m_view->setIconHorizontalGap(m_config.iconHorizontalGap);
     m_view->setIconVerticalGap(m_config.iconVerticalGap);
+
+    if(m_config.overrideGridMargins) {
+        m_view->setIconGridMargins(m_config.gridMargins);
+    }
+    else {
+        m_view->resetIconGridMargins();
+    }
+
     m_delegate->setArtworkCornerRadius(m_config.artworkCornerRadius);
-    m_delegate->setArtworkMargins(m_config.artworkMargins);
+    updateArtworkMargins();
     m_view->changeIconSize(m_config.iconSize);
     m_model->setIconSize(m_view->effectiveIconSize());
 
@@ -977,6 +1060,172 @@ void FilterWidget::applyConfig(const ConfigData& config)
     else if(layoutChanged || backgroundChanged || appearanceChanged) {
         Q_EMIT expansionLayoutChanged();
     }
+}
+
+FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layout) const
+{
+    ConfigData config{defaultConfig()};
+
+    config.doubleClickAction = layout.value("DoubleClickAction"_L1).toInt(config.doubleClickAction);
+    config.middleClickAction = layout.value("MiddleClickAction"_L1).toInt(config.middleClickAction);
+    config.expansionDoubleClickAction
+        = layout.value("ExpansionDoubleClickAction"_L1).toInt(config.expansionDoubleClickAction);
+    config.expansionMiddleClickAction
+        = layout.value("ExpansionMiddleClickAction"_L1).toInt(config.expansionMiddleClickAction);
+    config.sendPlayback = layout.value("SendPlayback"_L1).toBool(config.sendPlayback);
+    config.source = static_cast<FilterSource>(layout.value("FilterSource"_L1).toInt(static_cast<int>(config.source)));
+    config.playlistEnabled          = layout.value("PlaylistEnabled"_L1).toBool(config.playlistEnabled);
+    config.autoSwitch               = layout.value("AutoSwitch"_L1).toBool(config.autoSwitch);
+    config.preservePlaybackPlaylist = layout.value("KeepAlive"_L1).toBool(config.preservePlaybackPlaylist);
+    config.playlistName             = layout.value("PlaylistName"_L1).toString(config.playlistName);
+    config.restoreState             = layout.value("RestoreState"_L1).toBool(config.restoreState);
+    config.rowHeight                = layout.value("RowHeight"_L1).toInt(config.rowHeight);
+    if(layout.contains("IconWidth"_L1) && layout.contains("IconHeight"_L1)) {
+        config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
+    }
+    config.iconHorizontalGap   = layout.value("IconHorizontalGap"_L1).toInt(config.iconHorizontalGap);
+    config.autoFitArtwork      = layout.value("AutoFitArtwork"_L1).toBool(config.autoFitArtwork);
+    config.iconVerticalGap     = layout.value("IconVerticalGap"_L1).toInt(config.iconVerticalGap);
+    config.overrideGridMargins = layout.value("OverrideGridMargins"_L1).toBool(config.overrideGridMargins);
+    config.gridMargins         = Gui::marginsFromJson(layout.value("GridMargins"_L1).toObject(), config.gridMargins);
+    config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
+    config.artworkMargins = Gui::marginsFromJson(layout.value("ArtworkMargins"_L1).toObject(), config.artworkMargins);
+    config.overrideArtworkMargins
+        = layout.value("OverrideArtworkMargins"_L1)
+              .toBool(layout.contains("ArtworkMargins"_L1) ? config.artworkMargins != factoryConfig().artworkMargins
+                                                           : config.overrideArtworkMargins);
+    config.expansionArtworkMargins
+        = Gui::marginsFromJson(layout.value("ExpansionArtworkMargins"_L1).toObject(), {10, 10, 10, 10});
+    config.expansionArtworkAutoMargins
+        = layout.value("ExpansionArtworkAutoMargins"_L1).toBool(config.expansionArtworkAutoMargins);
+    config.expansionArtworkReflection
+        = layout.value("ExpansionArtworkReflection"_L1).toBool(config.expansionArtworkReflection);
+    config.expansionArtworkReflectionHeight = std::clamp(
+        layout.value("ExpansionArtworkReflectionHeight"_L1).toInt(config.expansionArtworkReflectionHeight), 1, 100);
+    config.expansionArtworkReflectionOpacity = std::clamp(
+        layout.value("ExpansionArtworkReflectionOpacity"_L1).toInt(config.expansionArtworkReflectionOpacity), 0, 100);
+    config.expansionArtworkReflectionGap = std::clamp(
+        layout.value("ExpansionArtworkReflectionGap"_L1).toInt(config.expansionArtworkReflectionGap), 0, 100);
+    config.expansionShowCloseButton
+        = layout.value("ExpansionShowCloseButton"_L1).toBool(config.expansionShowCloseButton);
+    config.expansionAlternatingRows
+        = layout.value("ExpansionAlternatingRows"_L1).toBool(config.expansionAlternatingRows);
+    config.expansionMatchGridMargins
+        = layout.value("ExpansionMatchGridMargins"_L1).toBool(config.expansionMatchGridMargins);
+    config.expansionArtworkOnLeft = layout.value("ExpansionArtworkOnLeft"_L1).toBool(config.expansionArtworkOnLeft);
+    config.expansionArtworkSize
+        = std::clamp(layout.value("ExpansionArtworkSize"_L1).toInt(config.expansionArtworkSize), 50, 200);
+    config.expansionMaximumColumns
+        = std::max(0, layout.value("ExpansionMaximumColumns"_L1).toInt(config.expansionMaximumColumns));
+    config.expansionMinimumRows
+        = std::max(1, layout.value("ExpansionMinimumRows"_L1).toInt(config.expansionMinimumRows));
+    config.expansionStretchColumns = layout.value("ExpansionStretchColumns"_L1).toBool(config.expansionStretchColumns);
+    config.expansionMinimumColumnWidth
+        = std::clamp(layout.value("ExpansionMinimumColumnWidth"_L1).toInt(config.expansionMinimumColumnWidth), 25, 300);
+    config.expansionScripts.load(layout.value("ExpansionScripts"_L1).toObject());
+    config.expansionPlayingRowFont
+        = layout.value("ExpansionPlayingRowFont"_L1).toString(config.expansionPlayingRowFont);
+    config.expansionPlayingRowColour
+        = layout.value("ExpansionPlayingRowColour"_L1).toString(config.expansionPlayingRowColour);
+    config.expandGroups      = layout.value("ExpandGroups"_L1).toBool(config.expandGroups);
+    config.expansionAnimated = layout.value("ExpansionAnimated"_L1).toBool(config.expansionAnimated);
+    config.expansionAnimationDuration
+        = std::clamp(layout.value("ExpansionAnimationDuration"_L1).toInt(config.expansionAnimationDuration), 50, 2000);
+    config.expandedArtwork     = layout.value("ExpandedArtwork"_L1).toBool(config.expandedArtwork);
+    config.rowHeight           = std::max(config.rowHeight, 0);
+    config.iconHorizontalGap   = std::max(config.iconHorizontalGap, -1);
+    config.iconVerticalGap     = std::max(config.iconVerticalGap, 0);
+    config.artworkCornerRadius = std::max(config.artworkCornerRadius, 0);
+
+    if(!config.iconSize.isValid()) {
+        config.iconSize = factoryConfig().iconSize;
+    }
+
+    config.coverFlow.load(layout.value("CoverFlow"_L1).toObject());
+    config.background.loadLayout(layout.value("Background"_L1).toObject());
+    config.expansionBackground.loadLayout(layout.value("ExpansionBackground"_L1).toObject());
+    config.expansionBackgroundColour
+        = layout.value("ExpansionBackgroundColour"_L1).toString(config.expansionBackgroundColour);
+
+    config.viewMode
+        = static_cast<ExpandedTreeView::ViewMode>(layout.value("Display"_L1).toInt(static_cast<int>(config.viewMode)));
+    config.captionDisplay = static_cast<ExpandedTreeView::CaptionDisplay>(
+        layout.value("Captions"_L1).toInt(static_cast<int>(config.captionDisplay)));
+    config.coverType = static_cast<Track::Cover>(layout.value("Artwork"_L1).toInt(static_cast<int>(config.coverType)));
+    config.showSummary     = layout.value("ShowSummary"_L1).toBool(config.showSummary);
+    config.showHeader      = layout.value("ShowHeader"_L1).toBool(config.showHeader);
+    config.showScrollbar   = layout.value("ShowScrollbar"_L1).toBool(config.showScrollbar);
+    config.alternatingRows = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
+    const int coverSource
+        = layout.value("Source"_L1).toInt(config.coverSource ? static_cast<int>(*config.coverSource) : -1);
+    config.coverSource
+        = coverSource < 0 ? std::nullopt : std::optional{static_cast<ArtworkSourcePreference>(coverSource)};
+
+    return config;
+}
+
+void FilterWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
+{
+    layout["DoubleClickAction"_L1]                 = config.doubleClickAction;
+    layout["MiddleClickAction"_L1]                 = config.middleClickAction;
+    layout["ExpansionDoubleClickAction"_L1]        = config.expansionDoubleClickAction;
+    layout["ExpansionMiddleClickAction"_L1]        = config.expansionMiddleClickAction;
+    layout["SendPlayback"_L1]                      = config.sendPlayback;
+    layout["FilterSource"_L1]                      = static_cast<int>(config.source);
+    layout["PlaylistEnabled"_L1]                   = config.playlistEnabled;
+    layout["AutoSwitch"_L1]                        = config.autoSwitch;
+    layout["KeepAlive"_L1]                         = config.preservePlaybackPlaylist;
+    layout["PlaylistName"_L1]                      = config.playlistName;
+    layout["RestoreState"_L1]                      = config.restoreState;
+    layout["RowHeight"_L1]                         = config.rowHeight;
+    layout["IconWidth"_L1]                         = config.iconSize.width();
+    layout["IconHeight"_L1]                        = config.iconSize.height();
+    layout["IconHorizontalGap"_L1]                 = config.iconHorizontalGap;
+    layout["AutoFitArtwork"_L1]                    = config.autoFitArtwork;
+    layout["IconVerticalGap"_L1]                   = config.iconVerticalGap;
+    layout["OverrideGridMargins"_L1]               = config.overrideGridMargins;
+    layout["GridMargins"_L1]                       = Gui::marginsToJson(config.gridMargins);
+    layout["ArtworkCornerRadius"_L1]               = config.artworkCornerRadius;
+    layout["OverrideArtworkMargins"_L1]            = config.overrideArtworkMargins;
+    layout["ArtworkMargins"_L1]                    = Gui::marginsToJson(config.artworkMargins);
+    layout["ExpandGroups"_L1]                      = config.expandGroups;
+    layout["ExpansionAnimated"_L1]                 = config.expansionAnimated;
+    layout["ExpansionAnimationDuration"_L1]        = config.expansionAnimationDuration;
+    layout["ExpansionAlternatingRows"_L1]          = config.expansionAlternatingRows;
+    layout["ExpansionMatchGridMargins"_L1]         = config.expansionMatchGridMargins;
+    layout["ExpandedArtwork"_L1]                   = config.expandedArtwork;
+    layout["ExpansionArtworkMargins"_L1]           = Gui::marginsToJson(config.expansionArtworkMargins);
+    layout["ExpansionArtworkAutoMargins"_L1]       = config.expansionArtworkAutoMargins;
+    layout["ExpansionArtworkReflection"_L1]        = config.expansionArtworkReflection;
+    layout["ExpansionArtworkReflectionHeight"_L1]  = config.expansionArtworkReflectionHeight;
+    layout["ExpansionArtworkReflectionOpacity"_L1] = config.expansionArtworkReflectionOpacity;
+    layout["ExpansionArtworkReflectionGap"_L1]     = config.expansionArtworkReflectionGap;
+    layout["ExpansionShowCloseButton"_L1]          = config.expansionShowCloseButton;
+    layout["ExpansionArtworkOnLeft"_L1]            = config.expansionArtworkOnLeft;
+    layout["ExpansionArtworkSize"_L1]              = config.expansionArtworkSize;
+    layout["ExpansionMaximumColumns"_L1]           = config.expansionMaximumColumns;
+    layout["ExpansionMinimumRows"_L1]              = config.expansionMinimumRows;
+    layout["ExpansionStretchColumns"_L1]           = config.expansionStretchColumns;
+    layout["ExpansionMinimumColumnWidth"_L1]       = config.expansionMinimumColumnWidth;
+    layout["ExpansionScripts"_L1]                  = config.expansionScripts.toJson();
+    layout["ExpansionPlayingRowFont"_L1]           = config.expansionPlayingRowFont;
+    layout["ExpansionPlayingRowColour"_L1]         = config.expansionPlayingRowColour;
+    layout["CoverFlow"_L1]                         = config.coverFlow.toJson();
+    QJsonObject background;
+    config.background.saveLayout(background);
+    layout["Background"_L1] = background;
+    QJsonObject expansionBackground;
+    config.expansionBackground.saveLayout(expansionBackground);
+    layout["ExpansionBackground"_L1]       = expansionBackground;
+    layout["ExpansionBackgroundColour"_L1] = config.expansionBackgroundColour;
+    layout["Display"_L1]                   = static_cast<int>(config.viewMode);
+    layout["Captions"_L1]                  = static_cast<int>(config.captionDisplay);
+    layout["Artwork"_L1]                   = static_cast<int>(config.coverType);
+    layout["ShowSummary"_L1]               = config.showSummary;
+    layout["ShowHeader"_L1]                = config.showHeader;
+    layout["ShowScrollbar"_L1]             = config.showScrollbar;
+    layout["AlternatingRows"_L1]           = config.alternatingRows;
+    layout["Source"_L1]                    = config.coverSource ? static_cast<int>(*config.coverSource) : -1;
 }
 
 void FilterWidget::openConfigDialog()
@@ -1128,7 +1377,7 @@ void FilterWidget::timerEvent(QTimerEvent* event)
 void FilterWidget::setupConnections()
 {
     const auto syncIconColumnOrder = [this]() {
-        if(m_view->viewMode() == ExpandedTreeView::ViewMode::Icon) {
+        if(m_view->viewMode() != ExpandedTreeView::ViewMode::Tree) {
             m_model->setColumnOrder(Utils::logicalIndexOrder(m_header));
         }
         if(!m_expandedKey.isEmpty()) {
@@ -1155,15 +1404,16 @@ void FilterWidget::setupConnections()
     QObject::connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
                      &FilterWidget::handleSelectionChanged);
     QObject::connect(m_view, &ExpandedTreeView::viewModeChanged, this, [this](ExpandedTreeView::ViewMode mode) {
-        m_model->setShowDecoration(mode == ExpandedTreeView::ViewMode::Icon);
+        m_model->setShowDecoration(mode != ExpandedTreeView::ViewMode::Tree);
         if(mode != ExpandedTreeView::ViewMode::Icon) {
             closeExpansion();
         }
         scheduleVisibleCoverPinUpdate();
     });
     QObject::connect(m_view, &QAbstractItemView::iconSizeChanged, this, [this](const QSize& size) {
-        if(size.isValid() && m_config.iconSize != size) {
-            m_config.iconSize = size;
+        if(size.isValid() && (m_config.iconSize != size || m_config.autoFitArtwork != m_view->autoFitArtwork())) {
+            m_config.iconSize       = size;
+            m_config.autoFitArtwork = m_view->autoFitArtwork();
             m_model->setIconSize(m_view->effectiveIconSize());
             scheduleVisibleCoverPinUpdate();
             Q_EMIT configChanged();
@@ -1172,7 +1422,15 @@ void FilterWidget::setupConnections()
     QObject::connect(m_view, &ExpandedTreeView::effectiveIconSizeChanged, this, [this](const QSize& size) {
         m_model->setIconSize(size);
         scheduleVisibleCoverPinUpdate();
+        if(m_config.autoFitArtwork != m_view->autoFitArtwork()) {
+            m_config.autoFitArtwork = m_view->autoFitArtwork();
+            Q_EMIT configChanged();
+        }
     });
+    QObject::connect(m_view, &ExpandedTreeView::contentSizeChanged, this,
+                     [this]() { scheduleVisibleCoverPinUpdate(); });
+    QObject::connect(m_view->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+                     [this]() { scheduleVisibleCoverPinUpdate(); });
     QObject::connect(m_view->verticalScrollBar(), &QScrollBar::valueChanged, this,
                      [this]() { scheduleVisibleCoverPinUpdate(); });
     QObject::connect(m_sortProxy, &QAbstractItemModel::modelReset, this,
@@ -1194,11 +1452,22 @@ void FilterWidget::setupConnections()
     QObject::connect(m_backgroundSource, &BackgroundImageSource::pixmapChanged, m_view,
                      &FilterView::setBackgroundPixmap);
 
+    QObject::connect(this, &FilterWidget::trackStatsChanged, m_library,
+                     [this](const TrackList& tracks, Track::Stat stat) {
+                         if(m_expansion) {
+                             m_expansionTracks = std::make_shared<const TrackList>(m_expansion->tracks());
+                         }
+                         m_library->updateTrackStats(tracks, stat);
+                         refreshExpansionScripts({});
+                     });
+
     m_settings->subscribe<Settings::Gui::ResolvedAppStyle>(this, [this](const QVariant& var) {
         const auto resolvedStyle = var.value<ResolvedAppStyle>();
         Gui::updateItemViewStyle(m_view, resolvedStyle.palette);
         scheduleExpansionUpdate();
     });
+
+    m_settings->subscribe<Settings::Gui::TrackEditorAppearance>(this, [this]() { refreshExpansionScripts({}); });
 
     const auto refreshRatingStars = [this]() {
         scheduleExpansionUpdate();
@@ -1289,13 +1558,46 @@ void FilterWidget::updateViewMode(ExpandedTreeView::ViewMode mode)
 
 void FilterWidget::updateCaptions(ExpandedTreeView::CaptionDisplay captions)
 {
+    if(m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow) {
+        captions = ExpandedTreeView::CaptionDisplay::Bottom;
+    }
     m_model->setShowLabels(captions != ExpandedTreeView::CaptionDisplay::None);
     m_view->setCaptionDisplay(captions);
 }
 
+void FilterWidget::updateArtworkMargins()
+{
+    auto margins{m_config.artworkMargins};
+    if(!m_config.overrideArtworkMargins) {
+        QStyleOptionViewItem option;
+        option.initFrom(m_view);
+
+        margins = factoryConfig().artworkMargins;
+        if(m_config.captionDisplay == ExpandedTreeView::CaptionDisplay::Right) {
+            const int horizontalMargin
+                = m_view->style()->pixelMetric(QStyle::PM_FocusFrameHMargin, &option, m_view) + 1;
+            margins = {horizontalMargin, 0, horizontalMargin, 0};
+        }
+        else if(m_config.captionDisplay == ExpandedTreeView::CaptionDisplay::Bottom) {
+            margins = {8, 8, 8, 4};
+        }
+        else if(m_config.captionDisplay == ExpandedTreeView::CaptionDisplay::Overlay
+                || m_config.captionDisplay == ExpandedTreeView::CaptionDisplay::None) {
+            margins = {};
+        }
+    }
+
+    m_view->setIconItemCornerRadius(m_config.artworkCornerRadius, margins);
+    m_delegate->setArtworkMargins(margins);
+}
+
 void FilterWidget::updateAppearance()
 {
-    m_view->setVerticalScrollBarPolicy(m_config.showScrollbar ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    const bool coverFlow = m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow;
+    m_view->setVerticalScrollBarPolicy(m_config.showScrollbar && !coverFlow ? Qt::ScrollBarAsNeeded
+                                                                            : Qt::ScrollBarAlwaysOff);
+    m_view->setHorizontalScrollBarPolicy(m_config.showScrollbar || !coverFlow ? Qt::ScrollBarAsNeeded
+                                                                              : Qt::ScrollBarAlwaysOff);
     m_view->setAlternatingRowColors(m_config.alternatingRows);
 
     const QVariant resolvedStyleValue = m_settings->value<Settings::Gui::ResolvedAppStyle>();
@@ -1312,7 +1614,7 @@ void FilterWidget::scheduleVisibleCoverPinUpdate(int delay)
 void FilterWidget::updateVisibleCoverPins()
 {
     auto* coverProvider = m_model->coverProvider();
-    if(m_view->viewMode() != ExpandedTreeView::ViewMode::Icon) {
+    if(m_view->viewMode() == ExpandedTreeView::ViewMode::Tree) {
         coverProvider->clearVisibleThumbnailKeys(this);
         return;
     }
@@ -1429,24 +1731,39 @@ void FilterWidget::submitExpansion(ExpansionRequest request)
         m_expansion = new FilterExpansionWidget(m_trackSelection, m_model->coverProvider()->repository());
         m_view->setExpansionWidget(m_expansion);
 
+        QObject::connect(m_expansion, &FilterExpansionWidget::trackStatsChanged, this,
+                         &FilterWidget::trackStatsChanged);
         QObject::connect(m_expansion, &FilterExpansionWidget::populated, this, &FilterWidget::applyExpansionContent);
         QObject::connect(m_expansion, &FilterExpansionWidget::closeRequested, this, [this]() { closeExpansion(true); });
         QObject::connect(m_expansion, &FilterExpansionWidget::contentChanged, m_view,
                          &ExpandedTreeView::refreshExpansion);
         QObject::connect(m_expansion, &FilterExpansionWidget::requestContextMenu, this,
                          &FilterWidget::requestContextMenu);
-        QObject::connect(m_expansion, &FilterExpansionWidget::doubleClicked, this, [this]() {
-            const auto action = m_config.expansionDoubleClickAction < 0
-                                  ? doubleClickAction()
-                                  : static_cast<TrackAction>(m_config.expansionDoubleClickAction);
-            Q_EMIT actionRequested(action);
-        });
-        QObject::connect(m_expansion, &FilterExpansionWidget::middleClicked, this, [this]() {
-            const auto action = m_config.expansionMiddleClickAction < 0
-                                  ? middleClickAction()
-                                  : static_cast<TrackAction>(m_config.expansionMiddleClickAction);
-            Q_EMIT actionRequested(action);
-        });
+
+        const auto execExpansionAction = [this](TrackAction action, const QModelIndex& index) {
+            if(action == TrackAction::Play && m_player
+               && m_player->playbackQueueMode() == PlaybackQueueMode::PlaylistWithOverrides) {
+                m_expansion->startPlayback(index);
+            }
+            else {
+                Q_EMIT actionRequested(action);
+            }
+        };
+        QObject::connect(m_expansion, &FilterExpansionWidget::doubleClicked, this,
+                         [this, execExpansionAction](const QModelIndex& index) {
+                             const auto action = m_config.expansionDoubleClickAction < 0
+                                                   ? doubleClickAction()
+                                                   : static_cast<TrackAction>(m_config.expansionDoubleClickAction);
+                             execExpansionAction(action, index);
+                         });
+        QObject::connect(m_expansion, &FilterExpansionWidget::middleClicked, this,
+                         [this, execExpansionAction](const QModelIndex& index) {
+                             const auto action = m_config.expansionMiddleClickAction < 0
+                                                   ? middleClickAction()
+                                                   : static_cast<TrackAction>(m_config.expansionMiddleClickAction);
+                             execExpansionAction(action, index);
+                         });
+
         QObject::connect(m_expansion, &FilterExpansionWidget::scrollAdjustmentRequested, this, [this](int delta) {
             auto* bar = m_view->verticalScrollBar();
             bar->setValue(bar->value() + delta);
@@ -1476,6 +1793,7 @@ ExpansionRequest FilterWidget::expansionRequest(std::shared_ptr<const TrackList>
     request.tracks                          = std::move(tracks);
     request.columnValues                    = m_expansionColumnValues;
     request.font                            = m_view->font();
+    request.inlineEditors                   = inlineTrackEditors(*m_settings);
     request.libraries                       = m_libraryManager ? m_libraryManager->allLibraries() : LibraryInfoMap{};
     request.context                         = m_scriptContext ? m_scriptContext->playbackContext()
                                             : m_player        ? makePlaybackScriptData(m_player)
@@ -1583,12 +1901,9 @@ void FilterWidget::applyExpansionContent(const ExpansionResult& result)
             const QRect iconRect     = m_view->visualRect(index);
             const int viewportHeight = m_view->viewport()->height();
             const int bottom         = m_expansion->y() + m_expansion->height();
-            const int spacing        = m_view->captionDisplay() != ExpandedTreeView::CaptionDisplay::Right
-                                            || m_view->useIconGapsForSideCaptions()
-                                         ? m_view->iconVerticalGap()
-                                         : 0;
+            const int topMargin      = m_view->iconScrollTopMargin(index);
             // Keep the selected icon and its top spacing visible while showing the expansion
-            const int scroll = std::clamp(bottom - viewportHeight, 0, std::max(0, iconRect.top() - spacing));
+            const int scroll = std::clamp(bottom - viewportHeight, 0, std::max(0, iconRect.top() - topMargin));
             if(scroll > 0) {
                 auto* bar = m_view->verticalScrollBar();
                 bar->setValue(bar->value() + scroll);
@@ -1716,7 +2031,12 @@ void FilterWidget::restoreScrollPosition()
     if(m_pendingScrollPosition >= 0) {
         const int scrollPosition = std::exchange(m_pendingScrollPosition, -1);
         QMetaObject::invokeMethod(
-            m_view, [this, scrollPosition]() { m_view->verticalScrollBar()->setValue(scrollPosition); },
+            m_view,
+            [this, scrollPosition]() {
+                auto* bar = m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow ? m_view->horizontalScrollBar()
+                                                                                        : m_view->verticalScrollBar();
+                bar->setValue(scrollPosition);
+            },
             Qt::QueuedConnection);
     }
 }
@@ -1728,21 +2048,25 @@ void FilterWidget::addDisplayMenu(QMenu* menu)
     auto* coverGroup   = new QActionGroup(displayMenu);
     auto* sourceGroup  = new QActionGroup(displayMenu);
 
-    auto* displayList      = new QAction(FilterWidget::tr("Columns"), displayGroup);
-    auto* displayArtBottom = new QAction(FilterWidget::tr("Artwork (bottom labels)"), displayGroup);
-    auto* displayArtLeft   = new QAction(FilterWidget::tr("Artwork (right labels)"), displayGroup);
-    auto* displayArtNone   = new QAction(FilterWidget::tr("Artwork (no labels)"), displayGroup);
-    auto* coverFront       = new QAction(FilterWidget::tr("Front cover"), coverGroup);
-    auto* coverBack        = new QAction(FilterWidget::tr("Back cover"), coverGroup);
-    auto* coverArtist      = new QAction(FilterWidget::tr("Artist"), coverGroup);
-    auto* sourceEmbedded   = new QAction(FilterWidget::tr("Use embedded covers"), sourceGroup);
-    auto* sourceDirectory  = new QAction(FilterWidget::tr("Use directory covers"), sourceGroup);
-    auto* sourceDefault    = new QAction(FilterWidget::tr("Use default source"), sourceGroup);
+    auto* displayList       = new QAction(FilterWidget::tr("Columns"), displayGroup);
+    auto* displayArtBottom  = new QAction(FilterWidget::tr("Artwork (bottom labels)"), displayGroup);
+    auto* displayArtLeft    = new QAction(FilterWidget::tr("Artwork (right labels)"), displayGroup);
+    auto* displayArtOverlay = new QAction(FilterWidget::tr("Artwork (overlay labels)"), displayGroup);
+    auto* displayArtNone    = new QAction(FilterWidget::tr("Artwork (no labels)"), displayGroup);
+    auto* displayCoverFlow  = new QAction(FilterWidget::tr("Cover flow"), displayGroup);
+    auto* coverFront        = new QAction(FilterWidget::tr("Front cover"), coverGroup);
+    auto* coverBack         = new QAction(FilterWidget::tr("Back cover"), coverGroup);
+    auto* coverArtist       = new QAction(FilterWidget::tr("Artist"), coverGroup);
+    auto* sourceEmbedded    = new QAction(FilterWidget::tr("Use embedded covers"), sourceGroup);
+    auto* sourceDirectory   = new QAction(FilterWidget::tr("Use directory covers"), sourceGroup);
+    auto* sourceDefault     = new QAction(FilterWidget::tr("Use default source"), sourceGroup);
 
     displayList->setCheckable(true);
     displayArtBottom->setCheckable(true);
     displayArtLeft->setCheckable(true);
+    displayArtOverlay->setCheckable(true);
     displayArtNone->setCheckable(true);
+    displayCoverFlow->setCheckable(true);
     coverFront->setCheckable(true);
     coverBack->setCheckable(true);
     coverArtist->setCheckable(true);
@@ -1758,14 +2082,20 @@ void FilterWidget::addDisplayMenu(QMenu* menu)
     using ViewMode       = ExpandedTreeView::ViewMode;
     using CaptionDisplay = ExpandedTreeView::CaptionDisplay;
 
-    if(currentMode == ExpandedTreeView::ViewMode::Tree) {
+    if(currentMode == ViewMode::Tree) {
         displayList->setChecked(true);
+    }
+    else if(currentMode == ViewMode::CoverFlow) {
+        displayCoverFlow->setChecked(true);
     }
     else if(currentCaptions == CaptionDisplay::Bottom) {
         displayArtBottom->setChecked(true);
     }
     else if(currentCaptions == CaptionDisplay::Right) {
         displayArtLeft->setChecked(true);
+    }
+    else if(currentCaptions == CaptionDisplay::Overlay) {
+        displayArtOverlay->setChecked(true);
     }
     else {
         displayArtNone->setChecked(true);
@@ -1809,10 +2139,22 @@ void FilterWidget::addDisplayMenu(QMenu* menu)
         config.captionDisplay = CaptionDisplay::Right;
         applyConfig(config);
     });
+    QObject::connect(displayArtOverlay, &QAction::triggered, this, [this]() {
+        auto config{m_config};
+        config.viewMode       = ViewMode::Icon;
+        config.captionDisplay = CaptionDisplay::Overlay;
+        applyConfig(config);
+    });
     QObject::connect(displayArtNone, &QAction::triggered, this, [this]() {
         auto config{m_config};
         config.viewMode       = ViewMode::Icon;
         config.captionDisplay = CaptionDisplay::None;
+        applyConfig(config);
+    });
+    QObject::connect(displayCoverFlow, &QAction::triggered, this, [this]() {
+        auto config{m_config};
+        config.viewMode       = ViewMode::CoverFlow;
+        config.captionDisplay = CaptionDisplay::Bottom;
         applyConfig(config);
     });
     QObject::connect(coverFront, &QAction::triggered, this, [this]() {
@@ -1849,6 +2191,7 @@ void FilterWidget::addDisplayMenu(QMenu* menu)
     auto* expandGroups = new QAction(tr("Expand selected group"), displayMenu);
     expandGroups->setCheckable(true);
     expandGroups->setChecked(m_config.expandGroups);
+    expandGroups->setEnabled(currentMode != ViewMode::CoverFlow);
     QObject::connect(expandGroups, &QAction::toggled, this, [this](bool checked) {
         auto config         = m_config;
         config.expandGroups = checked;
@@ -1952,155 +2295,6 @@ void FilterWidget::columnRemoved(int id)
     }
 
     Q_EMIT filterUpdated();
-}
-
-FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layout) const
-{
-    ConfigData config = defaultConfig();
-
-    config.doubleClickAction = layout.value("DoubleClickAction"_L1).toInt(config.doubleClickAction);
-    config.middleClickAction = layout.value("MiddleClickAction"_L1).toInt(config.middleClickAction);
-    config.expansionDoubleClickAction
-        = layout.value("ExpansionDoubleClickAction"_L1).toInt(config.expansionDoubleClickAction);
-    config.expansionMiddleClickAction
-        = layout.value("ExpansionMiddleClickAction"_L1).toInt(config.expansionMiddleClickAction);
-    config.sendPlayback = layout.value("SendPlayback"_L1).toBool(config.sendPlayback);
-    config.source = static_cast<FilterSource>(layout.value("FilterSource"_L1).toInt(static_cast<int>(config.source)));
-    config.playlistEnabled          = layout.value("PlaylistEnabled"_L1).toBool(config.playlistEnabled);
-    config.autoSwitch               = layout.value("AutoSwitch"_L1).toBool(config.autoSwitch);
-    config.preservePlaybackPlaylist = layout.value("KeepAlive"_L1).toBool(config.preservePlaybackPlaylist);
-    config.playlistName             = layout.value("PlaylistName"_L1).toString(config.playlistName);
-    config.restoreState             = layout.value("RestoreState"_L1).toBool(config.restoreState);
-    config.rowHeight                = layout.value("RowHeight"_L1).toInt(config.rowHeight);
-    if(layout.contains("IconWidth"_L1) && layout.contains("IconHeight"_L1)) {
-        config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
-    }
-    config.iconHorizontalGap   = layout.value("IconHorizontalGap"_L1).toInt(config.iconHorizontalGap);
-    config.autoFitArtwork      = layout.value("AutoFitArtwork"_L1).toBool(config.autoFitArtwork);
-    config.iconVerticalGap     = layout.value("IconVerticalGap"_L1).toInt(config.iconVerticalGap);
-    config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
-    config.artworkMargins = artworkMarginsFromJson(layout.value("ArtworkMargins"_L1).toObject(), config.artworkMargins);
-    config.expansionArtworkMargins
-        = artworkMarginsFromJson(layout.value("ExpansionArtworkMargins"_L1).toObject(), {10, 10, 10, 10});
-    config.expansionArtworkAutoMargins
-        = layout.value("ExpansionArtworkAutoMargins"_L1).toBool(config.expansionArtworkAutoMargins);
-    config.expansionArtworkReflection
-        = layout.value("ExpansionArtworkReflection"_L1).toBool(config.expansionArtworkReflection);
-    config.expansionArtworkReflectionHeight = std::clamp(
-        layout.value("ExpansionArtworkReflectionHeight"_L1).toInt(config.expansionArtworkReflectionHeight), 1, 100);
-    config.expansionArtworkReflectionOpacity = std::clamp(
-        layout.value("ExpansionArtworkReflectionOpacity"_L1).toInt(config.expansionArtworkReflectionOpacity), 0, 100);
-    config.expansionArtworkReflectionGap = std::clamp(
-        layout.value("ExpansionArtworkReflectionGap"_L1).toInt(config.expansionArtworkReflectionGap), 0, 100);
-    config.expansionShowCloseButton
-        = layout.value("ExpansionShowCloseButton"_L1).toBool(config.expansionShowCloseButton);
-    config.expansionAlternatingRows
-        = layout.value("ExpansionAlternatingRows"_L1).toBool(config.expansionAlternatingRows);
-    config.expansionArtworkOnLeft = layout.value("ExpansionArtworkOnLeft"_L1).toBool(config.expansionArtworkOnLeft);
-    config.expansionArtworkSize
-        = std::clamp(layout.value("ExpansionArtworkSize"_L1).toInt(config.expansionArtworkSize), 50, 200);
-    config.expansionMaximumColumns
-        = std::max(0, layout.value("ExpansionMaximumColumns"_L1).toInt(config.expansionMaximumColumns));
-    config.expansionMinimumRows
-        = std::max(1, layout.value("ExpansionMinimumRows"_L1).toInt(config.expansionMinimumRows));
-    config.expansionStretchColumns = layout.value("ExpansionStretchColumns"_L1).toBool(config.expansionStretchColumns);
-    config.expansionMinimumColumnWidth
-        = std::clamp(layout.value("ExpansionMinimumColumnWidth"_L1).toInt(config.expansionMinimumColumnWidth), 25, 300);
-    config.expansionScripts.load(layout.value("ExpansionScripts"_L1).toObject());
-    config.expansionPlayingRowFont
-        = layout.value("ExpansionPlayingRowFont"_L1).toString(config.expansionPlayingRowFont);
-    config.expansionPlayingRowColour
-        = layout.value("ExpansionPlayingRowColour"_L1).toString(config.expansionPlayingRowColour);
-    config.expandGroups        = layout.value("ExpandGroups"_L1).toBool(config.expandGroups);
-    config.expansionAnimated   = layout.value("ExpansionAnimated"_L1).toBool(config.expansionAnimated);
-    config.expandedArtwork     = layout.value("ExpandedArtwork"_L1).toBool(config.expandedArtwork);
-    config.rowHeight           = std::max(config.rowHeight, 0);
-    config.iconHorizontalGap   = std::max(config.iconHorizontalGap, -1);
-    config.iconVerticalGap     = std::max(config.iconVerticalGap, 0);
-    config.artworkCornerRadius = std::max(config.artworkCornerRadius, 0);
-
-    if(!config.iconSize.isValid()) {
-        config.iconSize = factoryConfig().iconSize;
-    }
-
-    config.background.loadLayout(layout.value("Background"_L1).toObject());
-    config.expansionBackground.loadLayout(layout.value("ExpansionBackground"_L1).toObject());
-    config.expansionBackgroundColour
-        = layout.value("ExpansionBackgroundColour"_L1).toString(config.expansionBackgroundColour);
-
-    config.viewMode
-        = static_cast<ExpandedTreeView::ViewMode>(layout.value("Display"_L1).toInt(static_cast<int>(config.viewMode)));
-    config.captionDisplay = static_cast<ExpandedTreeView::CaptionDisplay>(
-        layout.value("Captions"_L1).toInt(static_cast<int>(config.captionDisplay)));
-    config.coverType = static_cast<Track::Cover>(layout.value("Artwork"_L1).toInt(static_cast<int>(config.coverType)));
-    config.showSummary     = layout.value("ShowSummary"_L1).toBool(config.showSummary);
-    config.showHeader      = layout.value("ShowHeader"_L1).toBool(config.showHeader);
-    config.showScrollbar   = layout.value("ShowScrollbar"_L1).toBool(config.showScrollbar);
-    config.alternatingRows = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
-    const int coverSource
-        = layout.value("Source"_L1).toInt(config.coverSource ? static_cast<int>(*config.coverSource) : -1);
-    config.coverSource
-        = coverSource < 0 ? std::nullopt : std::optional{static_cast<ArtworkSourcePreference>(coverSource)};
-
-    return config;
-}
-
-void FilterWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
-{
-    layout["DoubleClickAction"_L1]                 = config.doubleClickAction;
-    layout["MiddleClickAction"_L1]                 = config.middleClickAction;
-    layout["ExpansionDoubleClickAction"_L1]        = config.expansionDoubleClickAction;
-    layout["ExpansionMiddleClickAction"_L1]        = config.expansionMiddleClickAction;
-    layout["SendPlayback"_L1]                      = config.sendPlayback;
-    layout["FilterSource"_L1]                      = static_cast<int>(config.source);
-    layout["PlaylistEnabled"_L1]                   = config.playlistEnabled;
-    layout["AutoSwitch"_L1]                        = config.autoSwitch;
-    layout["KeepAlive"_L1]                         = config.preservePlaybackPlaylist;
-    layout["PlaylistName"_L1]                      = config.playlistName;
-    layout["RestoreState"_L1]                      = config.restoreState;
-    layout["RowHeight"_L1]                         = config.rowHeight;
-    layout["IconWidth"_L1]                         = config.iconSize.width();
-    layout["IconHeight"_L1]                        = config.iconSize.height();
-    layout["IconHorizontalGap"_L1]                 = config.iconHorizontalGap;
-    layout["AutoFitArtwork"_L1]                    = config.autoFitArtwork;
-    layout["IconVerticalGap"_L1]                   = config.iconVerticalGap;
-    layout["ArtworkCornerRadius"_L1]               = config.artworkCornerRadius;
-    layout["ArtworkMargins"_L1]                    = artworkMarginsToJson(config.artworkMargins);
-    layout["ExpandGroups"_L1]                      = config.expandGroups;
-    layout["ExpansionAnimated"_L1]                 = config.expansionAnimated;
-    layout["ExpansionAlternatingRows"_L1]          = config.expansionAlternatingRows;
-    layout["ExpandedArtwork"_L1]                   = config.expandedArtwork;
-    layout["ExpansionArtworkMargins"_L1]           = artworkMarginsToJson(config.expansionArtworkMargins);
-    layout["ExpansionArtworkAutoMargins"_L1]       = config.expansionArtworkAutoMargins;
-    layout["ExpansionArtworkReflection"_L1]        = config.expansionArtworkReflection;
-    layout["ExpansionArtworkReflectionHeight"_L1]  = config.expansionArtworkReflectionHeight;
-    layout["ExpansionArtworkReflectionOpacity"_L1] = config.expansionArtworkReflectionOpacity;
-    layout["ExpansionArtworkReflectionGap"_L1]     = config.expansionArtworkReflectionGap;
-    layout["ExpansionShowCloseButton"_L1]          = config.expansionShowCloseButton;
-    layout["ExpansionArtworkOnLeft"_L1]            = config.expansionArtworkOnLeft;
-    layout["ExpansionArtworkSize"_L1]              = config.expansionArtworkSize;
-    layout["ExpansionMaximumColumns"_L1]           = config.expansionMaximumColumns;
-    layout["ExpansionMinimumRows"_L1]              = config.expansionMinimumRows;
-    layout["ExpansionStretchColumns"_L1]           = config.expansionStretchColumns;
-    layout["ExpansionMinimumColumnWidth"_L1]       = config.expansionMinimumColumnWidth;
-    layout["ExpansionScripts"_L1]                  = config.expansionScripts.toJson();
-    layout["ExpansionPlayingRowFont"_L1]           = config.expansionPlayingRowFont;
-    layout["ExpansionPlayingRowColour"_L1]         = config.expansionPlayingRowColour;
-    QJsonObject background;
-    config.background.saveLayout(background);
-    layout["Background"_L1] = background;
-    QJsonObject expansionBackground;
-    config.expansionBackground.saveLayout(expansionBackground);
-    layout["ExpansionBackground"_L1]       = expansionBackground;
-    layout["ExpansionBackgroundColour"_L1] = config.expansionBackgroundColour;
-    layout["Display"_L1]                   = static_cast<int>(config.viewMode);
-    layout["Captions"_L1]                  = static_cast<int>(config.captionDisplay);
-    layout["Artwork"_L1]                   = static_cast<int>(config.coverType);
-    layout["ShowSummary"_L1]               = config.showSummary;
-    layout["ShowHeader"_L1]                = config.showHeader;
-    layout["ShowScrollbar"_L1]             = config.showScrollbar;
-    layout["AlternatingRows"_L1]           = config.alternatingRows;
-    layout["Source"_L1]                    = config.coverSource ? static_cast<int>(*config.coverSource) : -1;
 }
 } // namespace Fooyin::Filters
 

@@ -121,6 +121,8 @@ public:
         int rowHeight{0};
         QSize iconSize{36, 36};
         int artworkCornerRadius{0};
+        QString playingRowFont;
+        QString playingRowColour;
         BackgroundConfig background;
     };
 
@@ -130,6 +132,8 @@ public:
     void saveDefaults(const ConfigData& config) const;
     void clearSavedDefaults() const;
     void applyConfig(const ConfigData& config);
+    [[nodiscard]] ConfigData configFromLayout(const QJsonObject& layout) const;
+    static void saveConfigToLayout(const ConfigData& config, QJsonObject& layout);
 
 Q_SIGNALS:
     void configChanged();
@@ -138,8 +142,6 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-    [[nodiscard]] ConfigData configFromLayout(const QJsonObject& layout) const;
-    static void saveConfigToLayout(const ConfigData& config, QJsonObject& layout);
     void openConfigDialog() override;
 
 private:

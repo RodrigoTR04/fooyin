@@ -19,7 +19,8 @@
 
 #include "taglibparser.h"
 
-#include "id3utils.h"
+#include "metadata/id3.h"
+#include "metadata/mpegproperties.h"
 #include "ratingtagpolicy.h"
 #include "tagdefs.h"
 #include "tagpolicy.h"
@@ -49,6 +50,7 @@
 #include <taglib/id3v1tag.h>
 #include <taglib/id3v2framefactory.h>
 #include <taglib/id3v2tag.h>
+#include <taglib/infotag.h>
 #include <taglib/mp4file.h>
 #include <taglib/mp4tag.h>
 #include <taglib/mpcfile.h>
@@ -79,6 +81,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -95,6 +98,40 @@ constexpr auto BufferSize = 1024;
 
 namespace Fooyin {
 namespace {
+void initialiseTagLib()
+{
+#if TAGLIB_MAJOR_VERSION < 2                                                                                           \
+    || (TAGLIB_MAJOR_VERSION == 2                                                                                      \
+        && (TAGLIB_MINOR_VERSION < 3 || (TAGLIB_MINOR_VERSION == 3 && TAGLIB_PATCH_VERSION < 2)))
+    static std::once_flag initialised;
+    std::call_once(initialised, [] {
+        // TagLib versions before 2.3.2 can race when first populating these maps.
+        // Populate them once before concurrent access.
+        TagLib::ID3v2::TextIdentificationFrame::involvedPeopleMap();
+
+        TagLib::PropertyMap properties;
+        properties.insert("TITLE", TagLib::StringList{"fooyin"});
+        TagLib::RIFF::Info::Tag wav;
+        wav.setProperties(properties);
+        TagLib::ASF::Tag asf;
+        asf.setProperties(properties);
+        TagLib::MP4::Tag mp4;
+        mp4.setProperties(properties);
+        mp4.properties();
+
+        TagLib::ID3v2::Tag legacy;
+        legacy.header()->setMajorVersion(3);
+        auto* people = new TagLib::ID3v2::TextIdentificationFrame("TIPL");
+        TagLib::StringList peopleFields;
+        peopleFields.append("ENGINEER");
+        peopleFields.append("fooyin");
+        people->setText(peopleFields);
+        legacy.addFrame(people);
+        TagLib::ID3v2::FrameFactory::instance()->rebuildAggregateFrames(&legacy);
+    });
+#endif
+}
+
 class IODeviceStream : public TagLib::IOStream
 {
 public:
@@ -1091,8 +1128,8 @@ void readGeneralProperties(const TagLib::PropertyMap& props, Track& track, bool 
         else if(field == Artist) {
             QStringList values = convertStringList(value);
             if(isId3v23) {
-                values = Id3Utils::splitStandardField(convertString(field), values,
-                                                      policy.splitId3v23SemicolonSeparatedTags);
+                values = Metadata::splitId3StandardField(convertString(field), values,
+                                                         policy.splitId3v23SemicolonSeparatedTags);
             }
             track.setArtists(values);
         }
@@ -1102,8 +1139,8 @@ void readGeneralProperties(const TagLib::PropertyMap& props, Track& track, bool 
         else if(field == AlbumArtist || (field == AlbumArtistAlt && !props.contains(AlbumArtist))) {
             QStringList values = convertStringList(value);
             if(isId3v23) {
-                values = Id3Utils::splitStandardField(convertString(field), values,
-                                                      policy.splitId3v23SemicolonSeparatedTags);
+                values = Metadata::splitId3StandardField(convertString(field), values,
+                                                         policy.splitId3v23SemicolonSeparatedTags);
             }
             track.setAlbumArtists(values);
         }
@@ -1114,24 +1151,24 @@ void readGeneralProperties(const TagLib::PropertyMap& props, Track& track, bool 
         else if(field == Genre) {
             QStringList values = convertStringList(value);
             if(isId3v23) {
-                values = Id3Utils::splitStandardField(convertString(field), values,
-                                                      policy.splitId3v23SemicolonSeparatedTags);
+                values = Metadata::splitId3StandardField(convertString(field), values,
+                                                         policy.splitId3v23SemicolonSeparatedTags);
             }
             track.setGenres(values);
         }
         else if(field == Composer) {
             QStringList values = convertStringList(value);
             if(isId3v23) {
-                values = Id3Utils::splitStandardField(convertString(field), values,
-                                                      policy.splitId3v23SemicolonSeparatedTags);
+                values = Metadata::splitId3StandardField(convertString(field), values,
+                                                         policy.splitId3v23SemicolonSeparatedTags);
             }
             track.setComposers(values);
         }
         else if(field == Performer) {
             QStringList values = convertStringList(value);
             if(isId3v23) {
-                values = Id3Utils::splitStandardField(convertString(field), values,
-                                                      policy.splitId3v23SemicolonSeparatedTags);
+                values = Metadata::splitId3StandardField(convertString(field), values,
+                                                         policy.splitId3v23SemicolonSeparatedTags);
             }
             track.setPerformers(values);
         }
@@ -1193,7 +1230,7 @@ void readGeneralProperties(const TagLib::PropertyMap& props, Track& track, bool 
             else {
                 QStringList values = convertStringList(value);
                 if(isId3v23) {
-                    values = Id3Utils::splitExtraField(tagEntry, values, policy.splitId3v23SemicolonSeparatedTags);
+                    values = Metadata::splitId3ExtraField(tagEntry, values, policy.splitId3v23SemicolonSeparatedTags);
                 }
                 addUniqueExtraTagValues(track, tagEntry, values);
             }
@@ -1381,22 +1418,22 @@ void readDiscTotalPair(const QString& discNumbers, Track& track)
     }
 }
 
-TagLib::ID3v2::UserTextIdentificationFrame* userTextFrame(TagLib::ID3v2::Tag* id3Tags,
-                                                          const TagLib::String& description)
-{
-    return TagLib::ID3v2::UserTextIdentificationFrame::find(id3Tags, description);
-}
-
 void removeUserTextFrame(TagLib::ID3v2::Tag* id3Tags, const TagLib::String& description)
 {
-    while(auto* frame = userTextFrame(id3Tags, description)) {
-        id3Tags->removeFrame(frame, true);
+    const TagLib::String upperDescription = description.upper();
+    const auto frames                     = id3Tags->frameList("TXXX");
+    for(auto* frame : frames) {
+        const auto* textFrame = dynamic_cast<TagLib::ID3v2::UserTextIdentificationFrame*>(frame);
+        if(textFrame && textFrame->description().upper() == upperDescription) {
+            id3Tags->removeFrame(frame, true);
+        }
     }
 }
 
 void writeId3TextRating(TagLib::ID3v2::Tag* id3Tags, const TextRatingWrite& rating)
 {
     id3Tags->removeFrames("FMPS_Rating");
+    removeUserTextFrame(id3Tags, "FMPS_Rating");
     removeUserTextFrame(id3Tags, "RATING");
     if(!rating.tag.isEmpty() && rating.tag != "FMPS_RATING"_L1 && rating.tag != "RATING"_L1) {
         removeUserTextFrame(id3Tags, convertString(rating.tag));
@@ -1406,25 +1443,11 @@ void writeId3TextRating(TagLib::ID3v2::Tag* id3Tags, const TextRatingWrite& rati
         return;
     }
 
-    if(rating.tag == "FMPS_RATING"_L1) {
-        auto ratingFrame
-            = std::make_unique<TagLib::ID3v2::TextIdentificationFrame>("FMPS_Rating", TagLib::String::UTF8);
-        ratingFrame->setText(convertString(rating.value));
-        id3Tags->addFrame(ratingFrame.release());
-    }
-    else if(rating.tag == "RATING"_L1) {
-        auto ratingFrame = std::make_unique<TagLib::ID3v2::UserTextIdentificationFrame>(TagLib::String::UTF8);
-        ratingFrame->setDescription("RATING");
-        ratingFrame->setText(convertString(rating.value));
-        id3Tags->addFrame(ratingFrame.release());
-    }
-    else {
-        removeUserTextFrame(id3Tags, convertString(rating.tag));
-        auto ratingFrame = std::make_unique<TagLib::ID3v2::UserTextIdentificationFrame>(TagLib::String::UTF8);
-        ratingFrame->setDescription(convertString(rating.tag));
-        ratingFrame->setText(convertString(rating.value));
-        id3Tags->addFrame(ratingFrame.release());
-    }
+    const QString description = rating.tag == "FMPS_RATING"_L1 ? u"FMPS_Rating"_s : rating.tag;
+    auto ratingFrame          = std::make_unique<TagLib::ID3v2::UserTextIdentificationFrame>(TagLib::String::UTF8);
+    ratingFrame->setDescription(convertString(description));
+    ratingFrame->setText(convertString(rating.value));
+    id3Tags->addFrame(ratingFrame.release());
 }
 
 void writeId3TextPlaycount(TagLib::ID3v2::Tag* id3Tags, const TextPlaycountWrite& playcount)
@@ -1486,7 +1509,7 @@ void readId3Tags(const TagLib::ID3v2::Tag* id3Tags, Track& track, const TagPolic
         if(frames.contains("TPE1")) {
             const TagLib::ID3v2::FrameList& artistsFrame = frames["TPE1"];
             if(!artistsFrame.isEmpty()) {
-                const QStringList artists = Id3Utils::splitStandardField(
+                const QStringList artists = Metadata::splitId3StandardField(
                     QString::fromLatin1(Tag::Artist), {convertString(artistsFrame.front()->toString())}, false);
                 if(artists.size() > 1) {
                     track.setArtists(artists);
@@ -1591,17 +1614,23 @@ void writeID3v2Tags(TagLib::ID3v2::Tag* id3Tags, const Track& track, AudioReader
         }
     }
 
+    const bool updatePopmRating = id3PopmSupported && (options & AudioReader::Rating);
+    const bool writePopmRating  = updatePopmRating && policy.rating.writeId3Popm;
+
     if(options & AudioReader::Rating) {
-        writeId3TextRating(id3Tags, textRatingWrite(track, policy.rating));
+        auto rating = textRatingWrite(track, policy.rating);
+        if(writePopmRating) {
+            rating.value.clear();
+        }
+        writeId3TextRating(id3Tags, rating);
     }
     if(options & AudioReader::Playcount) {
         writeId3TextPlaycount(id3Tags, textPlaycountWrite(track, policy.playcount));
     }
 
-    const bool writePopmRating = id3PopmSupported && (options & AudioReader::Rating) && policy.rating.writeId3Popm;
     const bool writePopmPlaycount
         = id3PopmSupported && (options & AudioReader::Playcount) && policy.playcount.writeId3Popm;
-    if(writePopmRating || writePopmPlaycount) {
+    if(updatePopmRating || writePopmPlaycount) {
         const TagLib::String owner = convertString(policy.rating.popmOwner);
         auto* frame                = popmFrameByOwner(id3Tags, owner);
         const bool needsFrame
@@ -1614,9 +1643,8 @@ void writeID3v2Tags(TagLib::ID3v2::Tag* id3Tags, const Track& track, AudioReader
         }
 
         if(frame) {
-            frame->setEmail(owner);
-            if(writePopmRating) {
-                frame->setRating(ratingToPopm(track.rating(), policy.rating.popmMapping));
+            if(updatePopmRating) {
+                frame->setRating(writePopmRating ? ratingToPopm(track.rating(), policy.rating.popmMapping) : 0);
             }
             if(writePopmPlaycount) {
                 frame->setCounter(static_cast<unsigned int>(track.playCount()));
@@ -3031,31 +3059,8 @@ bool TagLibReader::init(const AudioSource& source)
     return m_format != AudioFileFormat::Unknown;
 }
 
-enum VbrMethod : uint8_t
-{
-    Unknown  = 0,
-    CBR      = 1,
-    ABR      = 2,
-    VBR1     = 3,
-    VBR2     = 4,
-    VBR3     = 5,
-    VBR4     = 6,
-    CBR2Pass = 8,
-    ABR2Pass = 9,
-};
-
-enum XingFlag : uint8_t
-{
-    Frames   = 1,
-    Bytes    = 2,
-    TOC      = 4,
-    VBRScale = 8,
-};
-
 void checkXingHeader(TagLib::MPEG::File* file, Track& track)
 {
-    // Reference: http://gabriel.mp3-tech.org/mp3infotag.html
-
     const auto firstFrameOffset = file->firstFrameOffset();
     if(firstFrameOffset < 0) {
         return;
@@ -3066,143 +3071,13 @@ void checkXingHeader(TagLib::MPEG::File* file, Track& track)
     file->seek(firstFrameOffset);
     const TagLib::ByteVector header{file->readBlock(firstHeader.frameLength())};
 
-    const QByteArray data{header.data(), header.size()};
-    QDataStream stream{data};
-    stream.setByteOrder(QDataStream::BigEndian);
-
-    qsizetype offset = data.indexOf("Info");
-    if(offset >= 0) {
-        track.setCodecProfile(u"CBR"_s);
-    }
-    else {
-        offset = data.indexOf("Xing");
-        if(offset < 0) {
-            if(data.indexOf("VBRI") >= 0) {
-                track.setCodecProfile(u"VBR"_s);
-            }
-            return;
-        }
-    }
-
-    stream.skipRawData(offset + 4);
-
-    qint32 flags;
-    stream >> flags;
-
-    qint32 vbrScale{-1};
-
-    if(flags & Frames) {
-        stream.skipRawData(4);
-    }
-    if(flags & Bytes) {
-        stream.skipRawData(4);
-    }
-    if(flags & TOC) {
-        stream.skipRawData(100);
-    }
-    if(flags & VBRScale) {
-        stream >> vbrScale;
-    }
-
-    QByteArray encoderData{9, Qt::Uninitialized};
-    const auto len = stream.readRawData(encoderData.data(), 9);
-
-    if(len == 9) {
-        auto encoder = QString::fromLatin1(encoderData.constData(), encoderData.size()).simplified().remove(u"\0"_s);
-        if(encoder.endsWith(u'.')) {
-            encoder.chop(1);
-        }
-        track.setTool(encoder);
-    }
-    else if(!encoderData.contains("LAME") && !encoderData.contains("L3.99")) {
-        if(vbrScale != -1) {
-            track.setCodecProfile(u"VBR"_s);
-        }
-        else {
-            track.setCodecProfile(u"CBR"_s);
-        }
-        return;
-    }
-
-    if(stream.atEnd() || !track.codecProfile().isEmpty()) {
-        // Likely CBR
-        return;
-    }
-
-    qint8 info;
-    stream >> info;
-    const auto vbrMethod = static_cast<VbrMethod>(info & 0x0F);
-
-    stream.skipRawData(1); // Lowpass
-    stream.skipRawData(4); // Peak amp
-    stream.skipRawData(2); // Track RG
-    stream.skipRawData(2); // Album RG
-    stream.skipRawData(1); // Encoding flags
-    stream.skipRawData(1); // Bitrate
-    stream.skipRawData(3); // Delays
-    stream.skipRawData(1); // Misc
-    stream.skipRawData(1); // MP3 gain
-
-    if(stream.atEnd()) {
-        return;
-    }
-
-    qint16 preset;
-    stream >> preset;
-    preset &= 0x07FF;
-
-    QString codecProfile;
-    switch(vbrMethod) {
-        case CBR:
-        case CBR2Pass:
-            codecProfile = u"CBR"_s;
-            break;
-        case ABR:
-        case ABR2Pass:
-            codecProfile = u"ABR"_s;
-            break;
-        case VBR1:
-        case VBR2:
-        case VBR3:
-        case VBR4:
-        case Unknown:
-        default:
-            // Assume VBR if we've got this far
-            codecProfile = u"VBR"_s;
-            break;
-    }
-
-    static const std::map<int, QString> presets{
-        {8, u"8"_s},
-        {320, u"320"_s},
-        {410, u"V9"_s},
-        {420, u"V8"_s},
-        {430, u"V7"_s},
-        {440, u"V6"_s},
-        {450, u"V5"_s},
-        {460, u"V4"_s},
-        {470, u"V3"_s},
-        {480, u"V2"_s},
-        {490, u"V1"_s},
-        {500, u"V0"_s},
-        {1000, u"R3mix"_s},
-        {1001, u"Standard"_s},
-        {1002, u"Extreme"_s},
-        {1003, u"Insane"_s},
-        {1004, u"Standard Fast"_s},
-        {1005, u"Extreme Fast"_s},
-        {1006, u"Medium"_s},
-        {1007, u"Medium Fast"_s},
-    };
-
-    if(!codecProfile.isEmpty() && presets.contains(preset)) {
-        codecProfile += " "_L1 + presets.at(preset);
-    }
-    track.setCodecProfile(codecProfile);
+    Metadata::readMpegProperties(QByteArrayView{header.data(), static_cast<qsizetype>(header.size())}, track);
 }
 
 bool TagLibReader::readTrack(const AudioSource& source, Track& track)
 {
+    initialiseTagLib();
+
     IODeviceStream stream{source.device, track.filename()};
     if(!stream.isOpen()) {
         qCWarning(TAGLIB) << "Unable to open file readonly:" << source.filepath;
@@ -3603,6 +3478,8 @@ bool TagLibReader::readTrack(const AudioSource& source, Track& track)
 
 QByteArray TagLibReader::readCover(const AudioSource& source, const Track& track, Track::Cover cover)
 {
+    initialiseTagLib();
+
     IODeviceStream stream{source.device, track.filename()};
     if(!stream.isOpen()) {
         qCWarning(TAGLIB) << "Unable to open file readonly:" << track.filepath();
@@ -3730,6 +3607,8 @@ bool TagLibReader::writeTrack(const AudioSource& source, const Track& track, Wri
     if(!(options & (Metadata | Rating | Playcount))) {
         return true;
     }
+
+    initialiseTagLib();
 
     IODeviceStream stream{source.device, track.filepath()};
     if(!stream.isOpen() || stream.readOnly()) {
@@ -4009,6 +3888,8 @@ bool TagLibReader::writeTrack(const AudioSource& source, const Track& track, Wri
 bool TagLibReader::writeCover(const AudioSource& source, const Track& track, const TrackCovers& covers,
                               WriteOptions options)
 {
+    initialiseTagLib();
+
     IODeviceStream stream{source.device, track.filepath()};
     if(!stream.isOpen() || stream.readOnly()) {
         return false;

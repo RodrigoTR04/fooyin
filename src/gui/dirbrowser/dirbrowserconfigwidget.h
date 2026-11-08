@@ -28,6 +28,10 @@ class QComboBox;
 class QRadioButton;
 
 namespace Fooyin {
+class BackgroundConfigWidget;
+class ColourButton;
+class FontButton;
+
 class DirBrowserConfigDialog : public WidgetConfigDialog<DirBrowser, DirBrowser::ConfigData>
 {
     Q_OBJECT
@@ -36,6 +40,8 @@ public:
     explicit DirBrowserConfigDialog(DirBrowser* browser, QWidget* parent = nullptr);
 
 protected:
+    void changeEvent(QEvent* event) override;
+
     [[nodiscard]] DirBrowser::ConfigData config() const override;
     void setConfig(const DirBrowser::ConfigData& config) override;
     void mergeExternalConfig(const DirBrowser::ConfigData& previous, const DirBrowser::ConfigData& current) override;
@@ -57,5 +63,8 @@ private:
     QComboBox* m_doubleClick;
     QComboBox* m_middleClick;
     QCheckBox* m_playbackOnSend;
+    FontButton* m_playingRowFont;
+    ColourButton* m_playingRowColour;
+    BackgroundConfigWidget* m_background;
 };
 } // namespace Fooyin

@@ -24,6 +24,7 @@
 #include "audiopipeline.h"
 #include "audioutils.h"
 #include "core/engine/pipeline/audiostream.h"
+#include "core/playback/trackplaybacksettings.h"
 #include "decodingcontroller.h"
 #include "dsp/dspregistry.h"
 #include "enginehelpers.h"
@@ -337,7 +338,9 @@ AudioEngine::AudioEngine(std::shared_ptr<AudioLoader> audioLoader, SettingsManag
     , m_outputReconnectQueued{false}
     , m_fadeController{&m_pipeline}
     , m_outputController{this, &m_pipeline}
-    , m_volume{m_settings->value<Settings::Core::OutputVolume>()}
+    , m_volumeControlEnabled{m_settings->value<Settings::Core::VolumeControlEnabled>()}
+    , m_requestedVolume{std::clamp(m_settings->value<Settings::Core::OutputVolume>(), 0.0, 1.0)}
+    , m_volume{m_volumeControlEnabled ? m_requestedVolume : 1.0}
     , m_playbackBufferLengthMs{m_settings->value<Settings::Core::BufferLength>()}
     , m_remoteDecodedBufferMs{std::max(RemoteDecodedBufferMinMs,
                                        m_settings->value<Settings::Core::Internal::RemoteBufferLengthMs>())}
@@ -631,8 +634,15 @@ void AudioEngine::setUpcomingTrackCandidate(const Engine::PlaybackItem& item)
     const Track& track    = item.track;
     const uint64_t itemId = item.itemId;
 
-    if(samePlaybackItem(item, upcomingTrackCandidateItem())) {
+    const bool crossfadingChanged
+        = TrackPlayback::crossfadingDisabled(track) != TrackPlayback::crossfadingDisabled(m_upcomingTrackCandidate);
+    if(samePlaybackItem(item, upcomingTrackCandidateItem()) && !crossfadingChanged) {
         return;
+    }
+
+    if(crossfadingChanged) {
+        clearPreparedCrossfadeTransition();
+        m_transitions.clearAutoTransitionReadiness();
     }
 
     if(m_preparedGaplessTransition.active && !samePlaybackItem(item, preparedGaplessTargetItem())) {
@@ -1431,19 +1441,32 @@ void AudioEngine::seekWithRequest(uint64_t positionMs, uint64_t requestId)
 
 void AudioEngine::setVolume(double volume)
 {
-    m_volume = std::clamp(volume, 0.0, 1.0);
+    m_requestedVolume = std::clamp(volume, 0.0, 1.0);
+    m_volume          = m_volumeControlEnabled ? m_requestedVolume : 1.0;
     m_pipeline.setOutputVolume(m_volume);
     publishPlaybackOutputInfo();
 }
 
+void AudioEngine::setVolumeControlEnabled(bool enabled)
+{
+    if(std::exchange(m_volumeControlEnabled, enabled) != enabled) {
+        setVolume(m_requestedVolume);
+    }
+}
+
 void AudioEngine::handleOutputVolumeChange(double volume)
 {
+    if(!m_volumeControlEnabled) {
+        return;
+    }
+
     volume = std::clamp(volume, 0.0, 1.0);
     if(qFuzzyCompare(m_volume + 1.0, volume + 1.0)) {
         return;
     }
 
-    m_volume = volume;
+    m_requestedVolume = volume;
+    m_volume          = volume;
     Q_EMIT volumeChanged(m_volume);
     publishPlaybackOutputInfo();
 }
@@ -1454,7 +1477,14 @@ void AudioEngine::updateCurrentTrackMetadata(const Track& track)
         return;
     }
 
+    const bool crossfadingChanged
+        = TrackPlayback::crossfadingDisabled(track) != TrackPlayback::crossfadingDisabled(m_currentTrack);
     m_currentTrack = track;
+    if(crossfadingChanged) {
+        clearPreparedCrossfadeTransition();
+        clearAutoAdvanceState();
+        m_transitions.clearAutoTransitionReadiness();
+    }
     updateAutoCrossfadeAlbumMatch();
     publishPlaybackOutputInfo();
 
@@ -1739,6 +1769,10 @@ bool AudioEngine::ensureCrossfadePrepared(const Engine::PlaybackItem& item, bool
 
 bool AudioEngine::handleManualChangeFade(const Engine::PlaybackItem& item)
 {
+    if(TrackPlayback::crossfadingDisabled(m_currentTrack) || TrackPlayback::crossfadingDisabled(item.track)) {
+        return false;
+    }
+
     const bool manualCrossfadeConfigured = m_crossfadeEnabled && m_crossfadingValues.manualChange.isConfigured();
 
     if(manualCrossfadeConfigured) {
@@ -1761,6 +1795,11 @@ bool AudioEngine::startTrackCrossfade(const Engine::PlaybackItem& item, bool isM
 {
     const Track& track = item.track;
     if(!track.isValid()) {
+        return false;
+    }
+
+    if(isManualChange
+       && (TrackPlayback::crossfadingDisabled(m_currentTrack) || TrackPlayback::crossfadingDisabled(track))) {
         return false;
     }
 
@@ -3043,8 +3082,9 @@ AudioEngine::AutoTransitionMode AudioEngine::effectiveAutoTransitionMode() const
 AudioEngine::AutoTransitionMode AudioEngine::configuredTrackEndAutoTransitionMode() const
 {
     const auto configuredMode = configuredTrackEndAutoTransitionMode(m_currentTrack);
-    if(configuredMode == AutoTransitionMode::Crossfade && m_skipAutoCrossfadeSameAlbum
-       && m_upcomingTrackCandidate.isValid() && m_autoCrossfadeAlbumMatches) {
+    if(configuredMode == AutoTransitionMode::Crossfade
+       && (TrackPlayback::crossfadingDisabled(m_upcomingTrackCandidate)
+           || (m_skipAutoCrossfadeSameAlbum && m_upcomingTrackCandidate.isValid() && m_autoCrossfadeAlbumMatches))) {
         return m_gaplessEnabled ? AutoTransitionMode::Gapless : AutoTransitionMode::None;
     }
 
@@ -3057,7 +3097,8 @@ AudioEngine::AutoTransitionMode AudioEngine::configuredTrackEndAutoTransitionMod
         return AutoTransitionMode::None;
     }
 
-    const bool crossfadeConfigured   = m_crossfadeEnabled && m_crossfadingValues.autoChange.isConfigured();
+    const bool crossfadeConfigured   = m_crossfadeEnabled && !TrackPlayback::crossfadingDisabled(track)
+                                    && m_crossfadingValues.autoChange.isConfigured();
     const uint64_t trackDurationMs   = track.duration();
     const bool trackDurationKnown    = trackDurationMs > 0;
     const uint64_t crossfadeWindowMs = static_cast<uint64_t>(std::max(
@@ -4696,8 +4737,11 @@ AudioEngine::evaluateAutoTransitionEligibility(const Track& track, bool isManual
     const int baseFadeInMs     = transitionSpec.effectiveInMs();
 
     const auto configuredMode = !isManualChange ? configuredTrackEndAutoTransitionMode() : AutoTransitionMode::None;
-    const bool crossfadeMix   = isManualChange ? (m_crossfadeEnabled && (baseFadeInMs > 0 || baseFadeOutMs > 0))
-                                               : (configuredMode == AutoTransitionMode::Crossfade);
+    const bool crossfadeMix
+        = isManualChange
+            ? (m_crossfadeEnabled && !TrackPlayback::crossfadingDisabled(m_currentTrack)
+               && !TrackPlayback::crossfadingDisabled(track) && (baseFadeInMs > 0 || baseFadeOutMs > 0))
+            : (configuredMode == AutoTransitionMode::Crossfade && !TrackPlayback::crossfadingDisabled(track));
     const bool boundaryFadeEnabled = !isManualChange && configuredMode == AutoTransitionMode::BoundaryFade;
     const bool gaplessHandoff
         = !isManualChange && (configuredMode == AutoTransitionMode::Gapless || boundaryFadeEnabled);
@@ -5246,6 +5290,7 @@ void AudioEngine::handleManualRemoteCrossfadePreparationResult(uint64_t requestI
                           << "preparedStream=" << preparedStreamAvailable << "preparedBufferedMs=" << preparedBufferedMs
                           << "targetMs=" << remoteTargetMs;
         clearPreparedNextTrack();
+        Q_EMIT trackChangeRejected(item);
         return;
     }
 
@@ -5280,6 +5325,7 @@ void AudioEngine::handleManualRemoteCrossfadePreparationResult(uint64_t requestI
                           << "targetTrackId=" << item.track.id() << "targetItemId=" << item.itemId
                           << "target=" << item.track.filenameExt();
         clearPreparedNextTrack();
+        Q_EMIT trackChangeRejected(item);
         return;
     }
 

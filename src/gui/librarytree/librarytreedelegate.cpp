@@ -111,7 +111,7 @@ void paintTextBlocks(QPainter* painter, const QStyleOptionViewItem& option, QRec
                      const std::vector<RichTextBlock>& blocks)
 {
     const auto defaultColour  = option.palette.color(QPalette::Text);
-    const auto selectedColour = option.palette.color(QPalette::HighlightedText);
+    const auto selectedColour = option.palette.color(Gui::itemViewSelectionTextRole(option));
     const auto linkColour     = option.palette.color(QPalette::Link);
 
     int x = rect.x();
@@ -235,8 +235,11 @@ void LibraryTreeDelegate::paint(QPainter* painter, const QStyleOptionViewItem& o
 
     painter->save();
 
-    if(opt.backgroundBrush.style() != Qt::NoBrush) {
-        painter->fillRect(option.rect, opt.backgroundBrush);
+    if(opt.backgroundBrush.style() != Qt::NoBrush && opt.state.testFlag(QStyle::State_MouseOver)
+       && !opt.state.testFlag(QStyle::State_Selected)) {
+        QStyleOptionViewItem background{opt};
+        background.state.setFlag(QStyle::State_MouseOver, false);
+        WidgetBackground::drawItemBackground(painter, background);
         opt.backgroundBrush = Qt::NoBrush;
     }
 

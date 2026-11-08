@@ -84,6 +84,7 @@ EngineHandler::EngineHandler(std::shared_ptr<AudioLoader> audioLoader, PlayerCon
     , m_engineOwnedTransitionGen{0}
     , m_endAdvanceSuppressed{false}
     , m_pendingBoundaryAdvanceGen{0}
+    , m_pendingBoundaryAdvanceReady{false}
     , m_lastPreparedNextTrackReady{false}
     , m_nextPrepareTrackRequestId{1}
     , m_nextSeekRequestId{1}
@@ -121,6 +122,7 @@ EngineHandler::EngineHandler(std::shared_ptr<AudioLoader> audioLoader, PlayerCon
                      &EngineController::audiblePauseDrainCompleted);
     QObject::connect(m_engine, &AudioEngine::deviceError, this, &EngineController::engineError);
     QObject::connect(m_engine, &AudioEngine::trackChanged, this, &EngineHandler::handleEngineTrackChanged);
+    QObject::connect(m_engine, &AudioEngine::trackChangeRejected, this, &EngineHandler::handleTrackChangeRejected);
     QObject::connect(m_engine, &AudioEngine::trackCommitted, this, &EngineHandler::handleTrackCommitted);
     QObject::connect(m_engine, &AudioEngine::trackStatusContextChanged, this, &EngineHandler::handleTrackStatus);
     QObject::connect(m_engine, &AudioEngine::nextTrackReadiness, this, &EngineHandler::handleNextTrackReadiness);
@@ -148,7 +150,8 @@ EngineHandler::EngineHandler(std::shared_ptr<AudioLoader> audioLoader, PlayerCon
     updateAnalysisRelays();
 
     QObject::connect(m_engine, &AudioEngine::volumeChanged, this, [this](double volume) {
-        if(!qFuzzyCompare(m_settings->value<Settings::Core::OutputVolume>() + 1.0, volume + 1.0)) {
+        if(m_settings->value<Settings::Core::VolumeControlEnabled>()
+           && !qFuzzyCompare(m_settings->value<Settings::Core::OutputVolume>() + 1.0, volume + 1.0)) {
             m_settings->set<Settings::Core::OutputVolume>(volume);
         }
     });
@@ -173,6 +176,8 @@ EngineHandler::EngineHandler(std::shared_ptr<AudioLoader> audioLoader, PlayerCon
 
     m_settings->subscribe<Settings::Core::AudioOutput>(this, &EngineHandler::changeOutput);
     m_settings->subscribe<Settings::Core::OutputVolume>(this, &EngineHandler::updateVolume);
+    m_settings->subscribe<Settings::Core::VolumeControlEnabled>(
+        this, [this](bool enabled) { dispatchCommand(&AudioEngine::setVolumeControlEnabled, enabled); });
     const auto updateAutomaticResampling = [this]() {
         dispatchCommand(&AudioEngine::setAutomaticResampling,
                         m_settings->value<Settings::Core::Internal::OutputAutoResample>(),
@@ -377,6 +382,25 @@ void EngineHandler::handleTrackChangeRequest(const Player::TrackChangeRequest& r
     dispatchCommand(&AudioEngine::loadTrack, makePlaybackItem(track, request.itemId), request.context.userInitiated);
 }
 
+void EngineHandler::handleTrackChangeRejected(const Engine::PlaybackItem& item)
+{
+    if(!m_pendingTrackChange || m_pendingTrackChange->itemId != item.itemId || item.itemId == 0) {
+        return;
+    }
+
+    qCWarning(ENG_HANDLER) << "Track change rejected; keeping current track:"
+                           << "targetTrackId=" << item.track.id() << "targetItemId=" << item.itemId;
+    m_pendingTrackChange.reset();
+    m_pendingTrackChangeGeneration.reset();
+    clearStartupRestore();
+    if(!m_playerController->rejectTrackChange(item.itemId)) {
+        // The controller may have already cancelled the request, so don't resume the old natural end
+        clearPendingBoundaryAdvance();
+        return;
+    }
+    tryPendingBoundaryAdvance();
+}
+
 void EngineHandler::handleUpcomingTrackChanged(const Player::UpcomingTrack& upcomingTrack)
 {
     m_upcomingTrack = upcomingTrack;
@@ -469,14 +493,13 @@ void EngineHandler::handleTrackBoundaryReached(const Track& track, uint64_t gene
     }
 
     clearEngineOwnedTransition();
-    if(remainingOutputMs == 0) {
-        clearPendingBoundaryAdvance();
-        m_playerController->advance(Player::AdvanceReason::NaturalEnd);
-        return;
-    }
-
     m_pendingBoundaryAdvanceTrack = track;
     m_pendingBoundaryAdvanceGen   = generation;
+    m_pendingBoundaryAdvanceReady = remainingOutputMs == 0;
+    if(remainingOutputMs == 0) {
+        tryPendingBoundaryAdvance();
+        return;
+    }
 
     qCDebug(ENG_HANDLER) << "Deferring controller natural-end advance until output boundary:"
                          << "trackId=" << track.id() << "generation=" << generation
@@ -486,19 +509,31 @@ void EngineHandler::handleTrackBoundaryReached(const Track& track, uint64_t gene
         std::min<uint64_t>(remainingOutputMs, static_cast<uint64_t>(std::numeric_limits<int>::max()))};
     QTimer::singleShot(delay, this, [this, track, generation]() {
         if(m_pendingBoundaryAdvanceGen != generation || !sameTrackIdentity(m_pendingBoundaryAdvanceTrack, track)
-           || !sameTrackIdentity(m_playerController->currentTrack(), track) || m_pendingTrackChange.has_value()) {
+           || !sameTrackIdentity(m_playerController->currentTrack(), track)) {
             return;
         }
 
-        clearPendingBoundaryAdvance();
-        m_playerController->advance(Player::AdvanceReason::NaturalEnd);
+        m_pendingBoundaryAdvanceReady = true;
+        tryPendingBoundaryAdvance();
     });
+}
+
+void EngineHandler::tryPendingBoundaryAdvance()
+{
+    if(!m_pendingBoundaryAdvanceReady || m_pendingTrackChange
+       || !sameTrackIdentity(m_playerController->currentTrack(), m_pendingBoundaryAdvanceTrack)) {
+        return;
+    }
+
+    clearPendingBoundaryAdvance();
+    m_playerController->advance(Player::AdvanceReason::NaturalEnd);
 }
 
 void EngineHandler::clearPendingBoundaryAdvance()
 {
     m_pendingBoundaryAdvanceTrack = {};
     m_pendingBoundaryAdvanceGen   = 0;
+    m_pendingBoundaryAdvanceReady = false;
 }
 
 void EngineHandler::timerEvent(QTimerEvent* event)

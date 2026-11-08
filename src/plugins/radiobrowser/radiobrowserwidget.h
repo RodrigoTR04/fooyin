@@ -25,7 +25,9 @@
 #include "radiowidget.h"
 
 #include <gui/trackselectioncontroller.h>
+#include <gui/widgets/backgroundconfig.h>
 
+#include <QMargins>
 #include <QPointer>
 
 #include <optional>
@@ -40,6 +42,9 @@ class QMenu;
 
 namespace Fooyin {
 class ActionManager;
+class BackgroundImageSource;
+class CoverRepository;
+class PlayerController;
 class Command;
 class SignalThrottler;
 class SettingsManager;
@@ -61,15 +66,19 @@ public:
 
     explicit RadioBrowserWidget(RadioBrowserController* controller, ActionManager* actionManager,
                                 TrackSelectionController* trackSelection, SettingsManager* settings,
+                                PlayerController* playerController, CoverRepository* coverRepository,
                                 bool applyInitialSearch = true, QWidget* parent = nullptr);
     ~RadioBrowserWidget() override;
 
     [[nodiscard]] QString name() const override;
     [[nodiscard]] QString layoutName() const override;
+
     void saveLayoutData(QJsonObject& layout) override;
     void loadLayoutData(const QJsonObject& layout) override;
     void finalise() override;
+
     void searchEvent(const SearchRequest& request) override;
+
     void browseSavedStations();
     void showFilterBar();
     void hideFilterBar();
@@ -93,20 +102,25 @@ public:
             bool separateSavedStationsViewState{false};
             int rowHeight{0};
             QSize iconSize{36, 36};
+            bool autoFitArtwork{false};
             int iconHorizontalGap{-1};
             int iconVerticalGap{8};
-            bool useIconGapsForSideCaptions{true};
-            int iconItemBorderWidth{2};
+            bool useIconGapsForSideCaptions{false};
+            QMargins iconMargins{8, 8, 8, 8};
+            int iconCornerRadius{20};
             bool uniformStationIcons{true};
 
             bool operator==(const ViewConfig&) const = default;
         };
 
         ViewConfig view;
+        QString playingRowColour;
+        BackgroundConfig background;
         int doubleClickAction{5};
         int middleClickAction{0};
         bool playbackOnSend{true};
         bool hideBroken{true};
+        bool showFilterBar{true};
 
         bool operator==(const ConfigData&) const = default;
     };
@@ -117,7 +131,11 @@ public:
     void saveDefaults(const ConfigData& config) const;
     void clearSavedDefaults() const;
     void applyConfig(const ConfigData& config);
+    [[nodiscard]] ConfigData configFromLayout(const QJsonObject& layout) const;
+    static void saveConfigToLayout(const ConfigData& config, QJsonObject& layout);
+
     [[nodiscard]] bool sendClicks() const;
+    [[nodiscard]] bool filterBarToggleAllowed() const;
     void setSendClicks(bool enabled);
     [[nodiscard]] bool separateSavedStationsViewStateAllowed() const;
     void setSeparateSavedStationsViewStateAllowed(bool allowed);
@@ -166,7 +184,7 @@ private:
     [[nodiscard]] QString defaultSearchName(const RadioSearchRequest& request) const;
 
     void resetFilters();
-    void setFilterBarVisible(bool visible);
+    void setFilterBarVisible(bool visible, bool notify = true);
 
     void refreshThemeIcons();
     void scheduleVisibleIconRequest();
@@ -249,6 +267,7 @@ private:
     RadioStationView* m_resultsView;
     RadioStationDelegate* m_delegate;
     RadioBrowserModel* m_model;
+    BackgroundImageSource* m_backgroundSource;
 
     ConfigData m_config;
     ConfigData::ViewConfig m_viewConfig;

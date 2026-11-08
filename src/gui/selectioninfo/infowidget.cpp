@@ -60,6 +60,7 @@ using namespace Qt::StringLiterals;
 constexpr auto PropertiesInfoState = "PropertiesDialog/SelectionInfo"_L1;
 
 namespace Fooyin {
+namespace {
 class InfoFilterModel : public QSortFilterProxyModel
 {
     Q_OBJECT
@@ -67,18 +68,18 @@ class InfoFilterModel : public QSortFilterProxyModel
 public:
     explicit InfoFilterModel(QObject* parent = nullptr)
         : QSortFilterProxyModel{parent}
-    { }
+    {
+        setRecursiveFilteringEnabled(true);
+    }
 
 protected:
     [[nodiscard]] bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override
     {
         const QModelIndex index = sourceModel()->index(sourceRow, 1, sourceParent);
-        if(sourceModel()->hasChildren(index)) {
-            return true;
-        }
         return !sourceModel()->data(index).toString().isEmpty();
     }
 };
+} // namespace
 
 class InfoPanel : public QWidget
 {
@@ -238,6 +239,7 @@ InfoPanel::InfoPanel(Application* app, ActionManager* actionManager, TrackSelect
     QObject::connect(app->library(), &MusicLibrary::tracksUpdated, this, startResetTimer);
     QObject::connect(selectionController, &TrackSelectionController::displaySelectionChanged, this, startResetTimer);
     QObject::connect(m_playerController, &PlayerController::currentTrackChanged, this, startResetTimer);
+    QObject::connect(m_playerController, &PlayerController::currentTrackUpdated, this, startResetTimer);
     QObject::connect(m_playerController, &PlayerController::playStateChanged, this, startResetTimer);
     QObject::connect(m_model, &QAbstractItemModel::modelReset, this, [this]() { queueViewReset(); });
 

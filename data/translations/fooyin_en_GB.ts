@@ -42,11 +42,11 @@
 <context>
     <name>Fooyin::AutoPlaylistDialog</name>
     <message numerus="yes">
-        <location filename="../../src/gui/autoplaylist/autoplaylistdialog.cpp" line="404"/>
+        <location filename="../../src/gui/autoplaylist/autoplaylistdialog.cpp" line="409"/>
         <source>%Ln matching track(s)</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%Ln matching track</numerusform>
+            <numerusform>%Ln matching tracks</numerusform>
         </translation>
     </message>
 </context>
@@ -173,7 +173,7 @@
         <location filename="../../src/gui/autoplaylist/autoplaylistquery.cpp" line="589"/>
         <source>years</source>
         <extracomment>Time unit in ‘in the last [number] [unit]’. The number is displayed separately; translate only the unit.</extracomment>
-        <translation type="unfinished">
+        <translation>
             <numerusform>year</numerusform>
             <numerusform>years</numerusform>
         </translation>
@@ -275,7 +275,7 @@
 <context>
     <name>Fooyin::ConverterSetupDialog</name>
     <message numerus="yes">
-        <location filename="../../src/gui/conversion/convertersetupdialog.cpp" line="1263"/>
+        <location filename="../../src/gui/conversion/convertersetupdialog.cpp" line="1327"/>
         <source>%Ln DSP(s)</source>
         <translation>
             <numerusform>%Ln DSP</numerusform>
@@ -343,9 +343,9 @@
     <message numerus="yes">
         <location filename="../../src/plugins/fileops/fileopsdialog.cpp" line="622"/>
         <source>Stopped: %Ln operation(s) not run</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Stopped: %Ln operation not run</numerusform>
+            <numerusform>Stopped: %Ln operations not run</numerusform>
         </translation>
     </message>
     <message numerus="yes">
@@ -400,7 +400,7 @@
 <context>
     <name>Fooyin::FileOps::FileOpsPlugin</name>
     <message numerus="yes">
-        <location filename="../../src/plugins/fileops/fileopsplugin.cpp" line="283"/>
+        <location filename="../../src/plugins/fileops/fileopsplugin.cpp" line="299"/>
         <source>Deleted %Ln track(s)</source>
         <translation>
             <numerusform>Deleted %Ln track</numerusform>
@@ -408,7 +408,7 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../../src/plugins/fileops/fileopsplugin.cpp" line="293"/>
+        <location filename="../../src/plugins/fileops/fileopsplugin.cpp" line="309"/>
         <source>Could not move %Ln file(s) to the trash. Delete them permanently?</source>
         <translation>
             <numerusform>Could not move %Ln file to the trash. Delete them permanently?</numerusform>
@@ -419,7 +419,7 @@
 <context>
     <name>Fooyin::Filters::TrackListWidget</name>
     <message numerus="yes">
-        <location filename="../../src/gui/filters/tracklistwidget.cpp" line="102"/>
+        <location filename="../../src/gui/filters/tracklistwidget.cpp" line="105"/>
         <source>%Ln track(s)</source>
         <translation>
             <numerusform>%Ln track</numerusform>
@@ -427,7 +427,7 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../../src/gui/filters/tracklistwidget.cpp" line="103"/>
+        <location filename="../../src/gui/filters/tracklistwidget.cpp" line="106"/>
         <source>%1 of %Ln track(s)</source>
         <translation>
             <numerusform>%1 of %Ln track</numerusform>
@@ -586,7 +586,7 @@
 <context>
     <name>Fooyin::PlaylistModel</name>
     <message numerus="yes">
-        <location filename="../../src/gui/playlist/playlistmodel.cpp" line="1747"/>
+        <location filename="../../src/gui/playlist/playlistmodel.cpp" line="1714"/>
         <source>%Ln track(s)</source>
         <translation>
             <numerusform>%Ln track</numerusform>
@@ -608,15 +608,15 @@
 <context>
     <name>Fooyin::PlaylistWidget</name>
     <message numerus="yes">
-        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="604"/>
+        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="653"/>
         <source>%Ln track(s)</source>
-        <translation type="unfinished">
+        <translation>
             <numerusform>%Ln track</numerusform>
             <numerusform>%Ln tracks</numerusform>
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="1434"/>
+        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="1484"/>
         <source>Update ‘%1’ (%Ln playlist(s))</source>
         <translation>
             <numerusform>Update ‘%1’ (%Ln playlist)</numerusform>
@@ -624,7 +624,7 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="2037"/>
+        <location filename="../../src/gui/playlist/playlistwidget.cpp" line="2038"/>
         <source>Writing metadata to %Ln track(s)…</source>
         <translation>
             <numerusform>Writing metadata to %Ln track…</numerusform>
@@ -657,7 +657,7 @@
 <context>
     <name>Fooyin::PropertiesDialogWidget</name>
     <message numerus="yes">
-        <location filename="../../src/gui/dialog/propertiesdialog.cpp" line="831"/>
+        <location filename="../../src/gui/dialog/propertiesdialog.cpp" line="662"/>
         <source>%Ln track(s)</source>
         <translation>
             <numerusform>%Ln track</numerusform>
@@ -668,7 +668,7 @@
 <context>
     <name>Fooyin::PropertiesWriteProgress</name>
     <message numerus="yes">
-        <location filename="../../src/gui/dialog/propertiesdialog.cpp" line="120"/>
+        <location filename="../../src/gui/dialog/propertiesdialog.cpp" line="130"/>
         <source>Writing changes to %Ln track(s)…</source>
         <translation>
             <numerusform>Writing changes to %Ln track…</numerusform>
@@ -679,7 +679,7 @@
 <context>
     <name>Fooyin::QuickTagger::QuickTaggerPlugin</name>
     <message numerus="yes">
-        <location filename="../../src/plugins/quicktagger/quicktaggerplugin.cpp" line="313"/>
+        <location filename="../../src/plugins/quicktagger/quicktaggerplugin.cpp" line="324"/>
         <source>Set ‘%1’ on %Ln track(s)?</source>
         <extracomment>%1 is the Quick Tagger entry name, for example &quot;Rating&quot;.</extracomment>
         <translation>

@@ -31,6 +31,7 @@
 #include "dialog/searchdialog.h"
 #include "filters/filterscripting.h"
 #include "internalguisettings.h"
+#include "logging/logwidget.h"
 #include "mainwindow.h"
 #include "menubar/editmenu.h"
 #include "menubar/filemenu.h"
@@ -104,7 +105,6 @@
 #include <utils/actions/widgetcontext.h>
 #include <utils/audioutils.h>
 #include <utils/fileutils.h>
-#include <utils/logging/logwidget.h>
 #include <utils/settings/advancedsettingsregistry.h>
 #include <utils/settings/settingsdialogcontroller.h>
 #include <utils/settings/settingsmanager.h>
@@ -117,6 +117,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -131,6 +133,7 @@
 #include <QPixmapCache>
 #include <QPointer>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QStyleFactory>
@@ -389,6 +392,9 @@ void GuiApplication::savePlaylist(const UId& playlistId) const
 
 void GuiApplication::setVolume(const double volume) const
 {
+    if(!m_settings->value<Settings::Core::VolumeControlEnabled>()) {
+        return;
+    }
     m_settings->set<Settings::Core::OutputVolume>(std::clamp(volume, 0.0, 1.0));
 }
 
@@ -512,8 +518,9 @@ void GuiApplication::searchForArtwork(const TrackList& tracks, Track::Cover type
                     u"%1/%2.%3"_s.arg(frontMethod.dir, frontMethod.filename, saveResult.suffix), tracks.front());
                 const QString cleanPath = QDir::cleanPath(path);
 
-                QFile file{cleanPath};
-                if(file.open(QIODevice::WriteOnly) && file.write(saveResult.image) == saveResult.image.size()) {
+                QSaveFile file{cleanPath};
+                if(file.open(QIODevice::WriteOnly) && file.write(saveResult.image) == saveResult.image.size()
+                   && file.commit()) {
                     for(const Track& updatedTrack : tracks) {
                         m_coverRepository->removeFromCache(updatedTrack, *m_settings);
                     }
@@ -1135,12 +1142,20 @@ void GuiApplication::registerActions()
     auto* muteAction = new QAction(tr("Mute"), m_mainWindow.get());
     Gui::setThemeIcon(muteAction, Constants::Icons::VolumeMute);
     muteAction->setCheckable(true);
-    muteAction->setChecked(m_settings->value<Settings::Core::OutputVolume>() <= 0.0);
     auto* muteCmd = m_actionManager->registerAction(muteAction, Constants::Actions::Mute);
     muteCmd->setCategories(volumeCategory);
     QObject::connect(muteAction, &QAction::triggered, m_mainWindow.get(), [this]() { mute(); });
-    m_settings->subscribe<Settings::Core::OutputVolume>(
-        muteAction, [muteAction](double volume) { muteAction->setChecked(volume <= 0.0); });
+
+    const auto updateVolumeActions = [this, volumeUp, volumeDown, muteAction]() {
+        const bool enabled = m_settings->value<Settings::Core::VolumeControlEnabled>();
+        volumeUp->setEnabled(enabled);
+        volumeDown->setEnabled(enabled);
+        muteAction->setEnabled(enabled);
+        muteAction->setChecked(enabled && m_settings->value<Settings::Core::OutputVolume>() <= 0.0);
+    };
+    m_settings->subscribe<Settings::Core::VolumeControlEnabled>(muteAction, updateVolumeActions);
+    m_settings->subscribe<Settings::Core::OutputVolume>(muteAction, updateVolumeActions);
+    updateVolumeActions();
 
     auto* clearPlaylistAction = new QAction(tr("Clear Current Playlist"), m_mainWindow.get());
     clearPlaylistAction->setStatusTip(tr("Remove all tracks from the current playlist"));
@@ -1751,6 +1766,10 @@ void GuiApplication::close()
 
 void GuiApplication::changeVolume(double delta) const
 {
+    if(!m_settings->value<Settings::Core::VolumeControlEnabled>()) {
+        return;
+    }
+
     static constexpr double MinVolumeDb = -60.0;
 
     const double volume = m_settings->value<Settings::Core::OutputVolume>();
@@ -1767,6 +1786,10 @@ void GuiApplication::changeVolume(double delta) const
 
 void GuiApplication::mute() const
 {
+    if(!m_settings->value<Settings::Core::VolumeControlEnabled>()) {
+        return;
+    }
+
     const double volume = m_settings->value<Settings::Core::OutputVolume>();
     if(volume > 0.0) {
         m_settings->set<Settings::Core::Internal::MuteVolume>(volume);
@@ -1951,70 +1974,24 @@ void GuiApplication::refreshAutoDetectedIconTheme() const
 
 void GuiApplication::registerLayouts()
 {
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Simple","Widgets":[{"SplitterVertical":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAHAAAAn0AAAAXAP////8BAAAAAgA=",
-            "Widgets":[{"SplitterHorizontal":{"Locked":[true,false,false,false],"State":"AAAA/wAAAAEAAAAEAAAAggAABqEAAAA+AAAAHAD/////AQAAAAEA","Widgets":[
-            {"PlayerControls":{}},{"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}}]}},{"SplitterHorizontal":{"Locked":[true,false],
-            "State":"AAAA/wAAAAEAAAACAAAA9QAABAoA/////wEAAAABAA==","Widgets":[{"SplitterVertical":{"Locked":[false,true],
-            "State":"AAAA/wAAAAEAAAACAAABfQAAAPEA/////wEAAAACAA==","Widgets":[{"LibraryTree":{}},{"ArtworkPanel":{}}]}},
-            {"PlaylistTabs":{"Widgets":[{"Playlist":{}}]}}]}},{"StatusBar":{}}]}}]})");
+    const QDir directory{u":/layouts"_s};
+    const auto filenames = directory.entryList({u"*.fyl"_s}, QDir::Files, QDir::Name);
+    for(const auto& filename : filenames) {
+        const QString path = directory.filePath(filename);
+        QFile file{path};
+        if(!file.open(QIODevice::ReadOnly)) {
+            qCWarning(GUI_APP) << "Failed to open built-in layout:" << path << file.errorString();
+            continue;
+        }
 
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Vision","Widgets":[{"SplitterVertical":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAHAAAA6EAAAAWAP////8BAAAAAgA=",
-            "Widgets":[{"SplitterHorizontal":{"Locked":[true,false,false,false],"State":"AAAA/wAAAAEAAAAEAAAAiQAABk8AAABHAAAAIwD/////AQAAAAEA",
-            "Widgets":[{"PlayerControls":{}},{"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}}]}},
-            {"SplitterHorizontal":{"State":"AAAA/wAAAAEAAAACAAADuwAAA48A/////wEAAAABAA==","Widgets":[
-            {"TabStack":{"Position":"West","State":"Artwork\u001fInfo\u001fLibrary Tree\u001fPlaylist Organiser",
-            "Widgets":[{"ArtworkPanel":{}},{"SelectionInfo":{}},{"LibraryTree":{"Grouping":"Artist/Album"}},
-            {"PlaylistOrganiser":{}}]}},{"Playlist":{}}]}},{"StatusBar":{}}]}}]})");
+        const FyLayout layout{file.readAll()};
+        if(!layout.isValid()) {
+            qCWarning(GUI_APP) << "Invalid built-in layout:" << path;
+            continue;
+        }
 
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Browser","Widgets":[{"SplitterVertical":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAFwAAA6YAAAAWAP////8BAAAAAgA=",
-            "Widgets":[{"SplitterHorizontal":{"Locked":[true,false,false,false],"State":"AAAA/wAAAAEAAAAEAAAAcgAABRoAAAA2AAAAGAD/////AQAAAAEA",
-            "Widgets":[{"PlayerControls":{}},{"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}}]}},
-            {"SplitterHorizontal":{"State":"AAAA/wAAAAEAAAACAAACeAAAAnoA/////wEAAAABAA==","Widgets":[{"DirectoryBrowser":{}},
-            {"ArtworkPanel":{}}]}},{"StatusBar":{}}]}}]})");
-
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Obsidian","Widgets":[{"SplitterVertical":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAGAAAAtwAAAAcAP////8BAAAAAgA=",
-            "Widgets":[{"StatusBar":{}},{"SplitterHorizontal":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAABeQAAAskAAAEvAP////8BAAAAAQA=",
-            "Widgets":[{"SplitterVertical":{"Locked":[true,false],"State":"AAAA/wAAAAEAAAACAAAAIAAAArsA/////wEAAAACAA==","Widgets":[{"SearchBar":{
-            "ID":"866eee837dee4919bd1d1e7c916e4013","Widgets":"1c827a58f07a4a939b185d9c0285f936|09356ff889694ff7941174448bd67b7a"}},
-            {"SplitterHorizontal":{"State":"AAAA/wAAAAEAAAACAAAArgAAAMoA/////wEAAAABAA==","Widgets":[{"LibraryFilter":{"Columns":"1",
-            "Group":"Default","ID":"1c827a58f07a4a939b185d9c0285f936","Index":0,"State":"AAAAJXjaY2BgYGRgYOhigNAgwGj/AcqACjAAACPXAb4="}},
-            {"LibraryFilter":{"Columns":"3","Group":"Default","ID":"09356ff889694ff7941174448bd67b7a","Index":1,
-            "State":"AAAAJXjaY2BgYGRgYFjKAKFBgNH+A5QBFWAAACcBAdk="}}]}}]}},{"PlaylistTabs":{"Widgets":[{"Playlist":{}}]}},
-            {"SplitterVertical":{"Locked":[true,false],"State":"AAAA/wAAAAEAAAACAAABLwAAAc0A/////wEAAAACAA==","Widgets":[{"ArtworkPanel":{}},{"SelectionInfo":{}}]}}]}},
-            {"SplitterHorizontal":{"Locked":[true,false,false,false],"State":"AAAA/wAAAAEAAAAEAAAAggAABoIAAAA+AAAAZwD/////AQAAAAEA","Widgets":[{"PlayerControls":{}},
-            {"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}}]}}]}}]})");
-
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Ember","Widgets":[{"SplitterVertical":{"Locked":[true,true,false,true],"State":"AAAA/wAAAAEAAAAEAAAA2QAAABoAAALGAAAAFgD/////AQAAAAIA",
-            "Widgets":[{"SplitterHorizontal":{"State":"AAAA/wAAAAEAAAAEAAABAAAAAQAAAAEAAAABAAD/////AQAAAAEA",
-            "Widgets":[{"LibraryFilter":{"Columns":"0","Group":"Default","ID":"955f29805de446d7a9b6195a94bfd817","Index":0}},
-            {"LibraryFilter":{"Columns":"1","Group":"Default","ID":"4fee1a754b3e47ff86f4c711fbf0f0eb","Index":1}},
-            {"LibraryFilter":{"Columns":"2","Group":"Default","ID":"3b20c1db282d4bfe9a95c776e6723608","Index":2}},
-            {"LibraryFilter":{"Columns":"3","Group":"Default","ID":"34777508a4ae4ec5939620f235e8ec1a","Index":3}}]}},
-            {"SplitterHorizontal":{"Locked":[true,false,false,false,true],"State":"AAAA/wAAAAEAAAAFAAAAcgAABRoAAAA2AAAAGAAAAWQA/////wEAAAABAA==",
-            "Widgets":[{"PlayerControls":{}},{"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}},{"SearchBar":{
-            "Widgets":"955f29805de446d7a9b6195a94bfd817|34777508a4ae4ec5939620f235e8ec1a|4fee1a754b3e47ff86f4c711fbf0f0eb|3b20c1db282d4bfe9a95c776e6723608"}}]}},
-            {"SplitterHorizontal":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAABQwAAA0IAAAFgAP////8BAAAAAQA=",
-            "Widgets":[{"SplitterVertical":{"Locked":[true,false],"State":"AAAA/wAAAAEAAAACAAABQwAAAVEA/////wEAAAACAA==","Widgets":[{"ArtworkPanel":{}},
-            {"SelectionInfo":{}}]}},{"Playlist":{}},{"PlaylistOrganiser":{}}]}},{"StatusBar":{}}]}}]})");
-
-    m_layoutProvider->registerLayout(
-        R"({"Name":"Gallery","Widgets":[{"SplitterVertical":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAGgAAA3EAAAAWAP////8BAAAAAgA=",
-            "Widgets":[{"SplitterHorizontal":{"Locked":[true,false,false,false],"State":"AAAA/wAAAAEAAAAEAAAAegAABHkAAAA9AAAAdwD/////AQAAAAEA",
-            "Widgets":[{"PlayerControls":{}},{"SeekBar":{}},{"PlaylistControls":{}},{"VolumeControls":{}}]}},
-            {"SplitterHorizontal":{"Locked":[true,false,true],"State":"AAAA/wAAAAEAAAADAAAAsgAAAzgAAAHyAP////8BAAAAAQA=",
-            "Widgets":[{"LibraryFilter":{"AlternatingRows":false,"Artwork":0,"AutoSwitch":true,"Captions":1,"Columns":"1","Display":0,"DoubleClickAction":3,
-            "FilterSource":0,"Group":"Gallery","IconHeight":100,"IconHorizontalGap":-1,"IconVerticalGap":10,"IconWidth":100,"Index":0,"KeepAlive":true,"MiddleClickAction":0,
-            "PlaylistEnabled":true,"PlaylistName":"Filter Results","RowHeight":0,"SendPlayback":true,"ShowHeader":true,"ShowScrollbar":true,"ShowSummary":true,"Source":-1,
-            "State":"AAAAJXjaY2BgYGRgYNjAAKFBgNH+A5QBFWAAAChLAeQ="}},{"LibraryFilter":{"AlternatingRows":false,"Artwork":0,"AutoSwitch":true,"Captions":1,"Columns":"3|1",
-            "Display":1,"DoubleClickAction":3,"FilterSource":0,"Group":"Gallery","IconHeight":160,"IconHorizontalGap":-1,"IconVerticalGap":12,"IconWidth":160,"Index":1,
-            "KeepAlive":true,"MiddleClickAction":0,"PlaylistEnabled":true,"PlaylistName":"Filter Results","RowHeight":0,"SendPlayback":true,"ShowHeader":true,
-            "ShowScrollbar":true,"ShowSummary":false,"Source":-1,"State":"AAAANXjaY2BgYGJgYJwLxEsYwGwwYASx7e9vb1T8XSFk/0DFPp/J+TsjTBIAucsIdg=="}},
-            {"Playlist":{"Preset":1,"SingleMode":true}}]}},{"StatusBar":{}}]}}]})");
+        m_layoutProvider->registerLayout(layout);
+    }
 }
 
 void GuiApplication::checkTracksNeedUpdate() const
@@ -2387,52 +2364,15 @@ void GuiApplication::addStreamUrl()
         return;
     }
 
-    m_playlistInteractor.tracksToCurrentPlaylist({Track{url.toString()}});
+    m_playlistInteractor.filesToCurrentPlaylist({url});
 }
 
 void GuiApplication::openFilesNow(const QList<QUrl>& urls)
 {
-    QList<QUrl> localFiles;
-    TrackList remoteTracks;
-
-    for(const QUrl& url : urls) {
-        if(url.isLocalFile()) {
-            localFiles.push_back(url);
-        }
-        else {
-            remoteTracks.emplace_back(url.toString());
-        }
-    }
-
     const QString playlistName = m_settings->value<Settings::Core::OpenFilesPlaylist>();
     const bool replacePlaylist = m_settings->value<Settings::Core::OpenFilesSendTo>();
 
-    if(!remoteTracks.empty()) {
-        const auto openTracks = [this, playlistName, replacePlaylist,
-                                 remoteTracks = std::move(remoteTracks)](const TrackList& scannedTracks) {
-            TrackList tracks;
-            tracks.reserve(scannedTracks.size() + remoteTracks.size());
-            tracks.insert(tracks.end(), scannedTracks.cbegin(), scannedTracks.cend());
-            tracks.insert(tracks.end(), remoteTracks.cbegin(), remoteTracks.cend());
-
-            if(replacePlaylist) {
-                m_playlistInteractor.tracksToNewPlaylistReplace(playlistName, tracks, true);
-            }
-            else {
-                m_playlistInteractor.tracksToNewPlaylist(playlistName, tracks, true);
-            }
-        };
-
-        if(localFiles.empty()) {
-            openTracks({});
-        }
-        else {
-            m_playlistInteractor.filesToTracks(localFiles, openTracks);
-        }
-        return;
-    }
-
-    QList<QUrl> files{urls};
+    QList files{urls};
     QUrl fileToPlay;
 
     if(m_settings->value<Settings::Core::OpenFileAddDirectory>() && urls.size() == 1) {

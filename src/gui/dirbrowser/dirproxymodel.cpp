@@ -20,16 +20,15 @@
 #include "dirproxymodel.h"
 
 #include <gui/guiconstants.h>
+#include <gui/guiutils.h>
 #include <gui/iconloader.h>
 #include <gui/widgets/autoheaderview.h>
 #include <utils/modelutils.h>
 #include <utils/utils.h>
 
 #include <QAbstractFileIconProvider>
-#include <QApplication>
 #include <QFileInfo>
 #include <QFileSystemModel>
-#include <QPalette>
 #include <QPixmap>
 #include <algorithm>
 
@@ -41,10 +40,8 @@ DirProxyModel::DirProxyModel(bool flat, QObject* parent)
     , m_flat{flat}
     , m_playingState{Player::PlayState::Stopped}
     , m_showIcons{true}
-    , m_playingColour{QApplication::palette().highlight().color()}
     , m_columnAlignments{Qt::AlignLeft, Qt::AlignRight, Qt::AlignLeft, Qt::AlignLeft}
 {
-    m_playingColour.setAlpha(90);
     setRecursiveFilteringEnabled(true);
 }
 
@@ -72,8 +69,6 @@ void DirProxyModel::reset(const QModelIndex& root)
 
 void DirProxyModel::resetPalette()
 {
-    m_playingColour = QApplication::palette().highlight().color();
-    m_playingColour.setAlpha(90);
     Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole});
 }
 
@@ -192,7 +187,10 @@ QVariant DirProxyModel::data(const QModelIndex& proxyIndex, int role) const
 
     if(isPlayingTrack) {
         if(role == Qt::BackgroundRole) {
-            return m_playingColour;
+            return m_playingColour.isValid() ? m_playingColour : Gui::defaultPlayingRowColour();
+        }
+        if(role == Qt::FontRole && m_playingFont) {
+            return *m_playingFont;
         }
         if(role == Qt::DecorationRole && isPlayingCell) {
             switch(m_playingState) {
@@ -240,11 +238,7 @@ QModelIndex DirProxyModel::sibling(int row, int column, const QModelIndex& index
         return {};
     }
 
-    if(row < 0 || std::cmp_greater_equal(row, m_nodes.size())) {
-        return {};
-    }
-
-    return createIndex(row, column, m_nodes.at(row).get());
+    return this->index(row, column);
 }
 
 bool DirProxyModel::hasChildren(const QModelIndex& parent) const
@@ -355,10 +349,18 @@ void DirProxyModel::setIconsEnabled(bool enabled)
     Utils::recursiveDataChanged(this, {});
 }
 
+void DirProxyModel::setPlayingRowStyle(const QString& font, const QColor& colour)
+{
+    QFont playingFont;
+    m_playingFont   = !font.isEmpty() && playingFont.fromString(font) ? std::optional{playingFont} : std::nullopt;
+    m_playingColour = colour;
+    Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole, Qt::FontRole});
+}
+
 void DirProxyModel::setPlayState(Player::PlayState state)
 {
     m_playingState = state;
-    Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole, Qt::DecorationRole, IsPlaying});
+    Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole, Qt::DecorationRole, Qt::FontRole, IsPlaying});
 }
 
 void DirProxyModel::setPlayingPath(const QString& path)
@@ -367,7 +369,7 @@ void DirProxyModel::setPlayingPath(const QString& path)
         return;
     }
 
-    Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole, Qt::DecorationRole, IsPlaying});
+    Utils::recursiveDataChanged(this, {}, {Qt::BackgroundRole, Qt::DecorationRole, Qt::FontRole, IsPlaying});
 }
 
 void DirProxyModel::setSearchText(const QString& text)

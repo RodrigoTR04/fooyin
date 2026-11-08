@@ -201,6 +201,37 @@ void PlaylistTabs::clearSavedDefaults() const
     m_settings->fileRemove(PlaylistTabsMiddleCloseKey);
 }
 
+PlaylistTabs::ConfigData PlaylistTabs::configFromLayout(const QJsonObject& layout) const
+{
+    ConfigData config{defaultConfig()};
+
+    config.titleScript = layout.value("TitleScript"_L1).toString(config.titleScript);
+    config.position
+        = static_cast<PlaylistTabPosition>(layout.value("TabPosition"_L1).toInt(static_cast<int>(config.position)));
+    config.expand             = layout.value("ExpandTabs"_L1).toBool(config.expand);
+    config.showAddButton      = layout.value("ShowAddButton"_L1).toBool(config.showAddButton);
+    config.showClearButton    = layout.value("ShowClearButton"_L1).toBool(config.showClearButton);
+    config.showCloseButton    = layout.value("ShowCloseButton"_L1).toBool(config.showCloseButton);
+    config.closeOnMiddleClick = layout.value("CloseOnMiddleClick"_L1).toBool(config.closeOnMiddleClick);
+
+    if(config.position != PlaylistTabPosition::Bottom) {
+        config.position = PlaylistTabPosition::Top;
+    }
+
+    return config;
+}
+
+void PlaylistTabs::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
+{
+    layout["TitleScript"_L1]        = config.titleScript;
+    layout["TabPosition"_L1]        = static_cast<int>(config.position);
+    layout["ExpandTabs"_L1]         = config.expand;
+    layout["ShowAddButton"_L1]      = config.showAddButton;
+    layout["ShowClearButton"_L1]    = config.showClearButton;
+    layout["ShowCloseButton"_L1]    = config.showCloseButton;
+    layout["CloseOnMiddleClick"_L1] = config.closeOnMiddleClick;
+}
+
 void PlaylistTabs::setupTabs()
 {
     const auto& playlists = m_playlistHandler->playlists();
@@ -822,37 +853,6 @@ void PlaylistTabs::setupButtons()
                                                  : Qt::BottomLeftCorner);
 }
 
-PlaylistTabs::ConfigData PlaylistTabs::configFromLayout(const QJsonObject& layout) const
-{
-    ConfigData config{defaultConfig()};
-
-    config.titleScript = layout.value("TitleScript"_L1).toString(config.titleScript);
-    config.position
-        = static_cast<PlaylistTabPosition>(layout.value("TabPosition"_L1).toInt(static_cast<int>(config.position)));
-    config.expand             = layout.value("ExpandTabs"_L1).toBool(config.expand);
-    config.showAddButton      = layout.value("ShowAddButton"_L1).toBool(config.showAddButton);
-    config.showClearButton    = layout.value("ShowClearButton"_L1).toBool(config.showClearButton);
-    config.showCloseButton    = layout.value("ShowCloseButton"_L1).toBool(config.showCloseButton);
-    config.closeOnMiddleClick = layout.value("CloseOnMiddleClick"_L1).toBool(config.closeOnMiddleClick);
-
-    if(config.position != PlaylistTabPosition::Bottom) {
-        config.position = PlaylistTabPosition::Top;
-    }
-
-    return config;
-}
-
-void PlaylistTabs::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
-{
-    layout["TitleScript"_L1]        = config.titleScript;
-    layout["TabPosition"_L1]        = static_cast<int>(config.position);
-    layout["ExpandTabs"_L1]         = config.expand;
-    layout["ShowAddButton"_L1]      = config.showAddButton;
-    layout["ShowClearButton"_L1]    = config.showClearButton;
-    layout["ShowCloseButton"_L1]    = config.showCloseButton;
-    layout["CloseOnMiddleClick"_L1] = config.closeOnMiddleClick;
-}
-
 void PlaylistTabs::tabChanged(int index) const
 {
     const auto id = m_tabs->tabBar()->tabData(index).value<UId>();
@@ -890,8 +890,6 @@ void PlaylistTabs::playlistChanged(Playlist* oldPlaylist, Playlist* playlist)
     if(!playlist) {
         return;
     }
-
-    setAcceptDrops(!playlist->isAutoPlaylist() && !playlist->isLocked());
 
     const int count = m_tabs->tabBar()->count();
     const UId id    = playlist->id();
@@ -938,7 +936,6 @@ void PlaylistTabs::playlistUpdated(const Playlist* playlist)
     refreshTabTitle(playlist);
 
     if(playlist->id() == m_playlistController->currentPlaylistId()) {
-        setAcceptDrops(!playlist->isAutoPlaylist() && !playlist->isLocked());
         if(!m_contextMenuPlaylist.isValid()) {
             m_savePlaylistAction->setEnabled(playlist->trackCount() > 0);
         }

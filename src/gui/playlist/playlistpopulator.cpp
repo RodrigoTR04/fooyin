@@ -21,6 +21,7 @@
 
 #include "playlistitemmodels.h"
 #include "playlistpreset.h"
+#include "scripting/inlinetrackeditors.h"
 
 #include <core/scripting/scripttypes.h>
 #include <gui/scripting/richtextutils.h>
@@ -193,11 +194,7 @@ PlaylistItem* PlaylistPopulatorPrivate::getOrInsertItem(const UId& key, Playlist
 RichText PlaylistPopulatorPrivate::evaluateTrackScript(const ParsedScript& parsedScript, const Track& track,
                                                        const ScriptContext& context)
 {
-    const auto evalScript = m_parser.evaluate(parsedScript, track, context, m_request.scriptOptions);
-    if(evalScript.isEmpty()) {
-        return {};
-    }
-    return m_formatter.evaluate(evalScript);
+    return evaluateInlineTrackScript(m_parser, m_formatter, parsedScript, track, context, m_request.scriptOptions);
 }
 
 RichText PlaylistPopulatorPrivate::evaluateGroupScript(const ParsedScript& parsedScript, const TrackList& tracks,
@@ -364,11 +361,10 @@ void PlaylistPopulatorPrivate::iterateHeader(const Track& track, PlaylistItem*& 
     }
 
     const auto& context = makeContext(index, m_trackDepth);
-    const auto script   = m_parser.evaluate(m_parsedHeader.text, track, context, m_request.scriptOptions);
-    const auto baseKey  = !m_request.preset.header.grouping.isEmpty()
-                            ? Utils::generateMd5Hash(
-                                  m_parser.evaluate(m_parsedHeader.grouping, track, context, m_request.scriptOptions))
-                            : Utils::generateMd5Hash(script);
+    const auto& groupingScript
+        = m_request.preset.header.grouping.isEmpty() ? m_parsedHeader.text : m_parsedHeader.grouping;
+    const auto baseKey
+        = Utils::generateMd5Hash(m_parser.evaluate(groupingScript, track, context, m_request.scriptOptions));
 
     UId key;
     if(m_prevHeaderKey.isValid() && m_prevBaseHeaderKey == baseKey && index == m_prevIndex + 1) {

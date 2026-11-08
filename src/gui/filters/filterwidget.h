@@ -21,8 +21,8 @@
 
 #include "fygui_export.h"
 
+#include "expansion/filterexpansionpopulator.h"
 #include "filtercontroller.h"
-#include "filterexpansionpopulator.h"
 #include "filterfwd.h"
 #include "filterrows.h"
 
@@ -154,15 +154,21 @@ public:
         bool alternatingRows{false};
         int rowHeight{0};
         QSize iconSize{100, 100};
-        bool autoFitArtwork{false};
+        bool autoFitArtwork{true};
         int iconHorizontalGap{-1};
         int iconVerticalGap{10};
+        bool overrideGridMargins{false};
+        QMargins gridMargins{10, 10, 10, 10};
         int artworkCornerRadius{0};
-        QMargins artworkMargins;
+        bool overrideArtworkMargins{false};
+        QMargins artworkMargins{8, 8, 8, 8};
+        CoverFlowSettings coverFlow;
         BackgroundConfig background;
         bool expandGroups{false};
         bool expansionAnimated{true};
+        int expansionAnimationDuration{250};
         bool expansionAlternatingRows{false};
+        bool expansionMatchGridMargins{false};
         bool expandedArtwork{true};
         int expansionMinimumRows{4};
         int expansionMaximumColumns{0};
@@ -190,6 +196,9 @@ public:
     void saveDefaults(const ConfigData& config) const;
     void clearSavedDefaults() const;
     void applyConfig(const ConfigData& config);
+    [[nodiscard]] ConfigData configFromLayout(const QJsonObject& layout) const;
+    static void saveConfigToLayout(const ConfigData& config, QJsonObject& layout);
+
     void openConfigDialog() override;
 
     void addFilterHeaderMenu(QMenu* menu, const QPoint& pos, bool includeWidgetActions = true);
@@ -208,7 +217,9 @@ Q_SIGNALS:
     void requestHeaderMenu(Fooyin::AutoHeaderView* header, const QPoint& pos);
     void requestContextMenu(const QPoint& pos, Fooyin::WidgetContext* context, bool hasSelection);
     void requestEditConnections();
+    void requestInitialGroup();
     void searchTextChanged(const QString& search);
+    void trackStatsChanged(const Fooyin::TrackList& tracks, Fooyin::Track::Stat stat);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -222,6 +233,7 @@ private:
     void handleSelectionChanged(const QItemSelection& selected, const QItemSelection& deselected);
     void updateViewMode(ExpandedTreeView::ViewMode mode);
     void updateCaptions(ExpandedTreeView::CaptionDisplay captions);
+    void updateArtworkMargins();
     void updateAppearance();
     void scheduleVisibleCoverPinUpdate(int delay = 0);
     void updateVisibleCoverPins();
@@ -244,12 +256,10 @@ private:
     void columnChanged(const FilterColumn& changedColumn);
     void columnRemoved(int id);
 
-    [[nodiscard]] ConfigData configFromLayout(const QJsonObject& layout) const;
-    static void saveConfigToLayout(const ConfigData& config, QJsonObject& layout);
-
     ActionManager* m_actionManager;
     FilterColumnRegistry* m_columnRegistry;
     LibraryManager* m_libraryManager;
+    MusicLibrary* m_library;
     SettingsManager* m_settings;
 
     FilterView* m_view;
@@ -260,6 +270,7 @@ private:
     BackgroundImageSource* m_backgroundSource;
 
     Id m_group;
+    bool m_initialGroupPending;
     int m_index;
     FilterColumnList m_columns;
     bool m_multipleColumns;

@@ -23,6 +23,7 @@
 #include "playlistitem.h"
 #include "playlistpopulator.h"
 #include "playlistpreset.h"
+#include "scripting/inlinetrackeditors.h"
 #include <core/constants.h>
 #include <core/coresettings.h>
 #include <core/engine/audioloader.h>
@@ -623,12 +624,7 @@ PlaylistModel::PlaylistModel(PlaylistInteractor* playlistInteractor, AudioLoader
     , m_loadingTextPending{false}
     , m_pixmapPadding{0}
     , m_pixmapPaddingTop{0}
-    , m_starRatingSize{settings->value<Settings::Gui::StarRatingSize>()}
-    , m_loveHeartSize{settings->value<Settings::Gui::LoveHeartSize>()}
-    , m_ratingStarColours{Gui::ratingStarColours(*settings)}
-    , m_unratedStarColour{Gui::unratedStarColour(*settings)}
-    , m_loveHeartColour{Gui::loveHeartColour(*settings)}
-    , m_unlovedHeartColour{Gui::unlovedHeartColour(*settings)}
+    , m_editorAppearance{settings->value<Settings::Gui::TrackEditorAppearance>().value<TrackEditorAppearance>()}
     , m_scriptSubscription{m_scriptContext->subscribe(this)}
     , m_currentPlaylist{nullptr}
     , m_matchPlayingTrackByIdentity{false}
@@ -637,36 +633,11 @@ PlaylistModel::PlaylistModel(PlaylistInteractor* playlistInteractor, AudioLoader
     m_populator.moveToThread(&m_populatorThread);
     m_populatorThread.start();
 
-    m_settings->subscribe<Settings::Gui::LoveHeartSize>(this, [this](int size) {
-        m_loveHeartSize = size;
+    m_settings->subscribe<Settings::Gui::TrackEditorAppearance>(this, [this](const QVariant& value) {
+        m_editorAppearance = value.value<TrackEditorAppearance>();
         invalidateData();
     });
-    m_settings->subscribe<Settings::Gui::StarRatingSize>(this, [this](int size) {
-        m_starRatingSize = size;
-        invalidateData();
-    });
-    const auto updateRatingColours = [this](const QVariant&) {
-        m_ratingStarColours = Gui::ratingStarColours(*m_settings);
-        invalidateData();
-    };
-    m_settings->subscribe<Settings::Gui::RatingOneStarColour>(this, updateRatingColours);
-    m_settings->subscribe<Settings::Gui::RatingTwoStarColour>(this, updateRatingColours);
-    m_settings->subscribe<Settings::Gui::RatingThreeStarColour>(this, updateRatingColours);
-    m_settings->subscribe<Settings::Gui::RatingFourStarColour>(this, updateRatingColours);
-    m_settings->subscribe<Settings::Gui::RatingFiveStarColour>(this, updateRatingColours);
-    m_settings->subscribe<Settings::Gui::UnratedStarColour>(this, [this](const QVariant& colour) {
-        m_unratedStarColour = colour.value<QColor>();
-        invalidateData();
-    });
-    m_settings->subscribe<Settings::Gui::LoveHeartColour>(this, [this](const QVariant& colour) {
-        m_loveHeartColour = colour.value<QColor>();
-        invalidateData();
-    });
-    m_settings->subscribe<Settings::Gui::UnlovedHeartColour>(this, [this](const QVariant& colour) {
-        m_unlovedHeartColour = colour.value<QColor>();
-        invalidateData();
-    });
-    auto refreshRatingStars = [this](const QString&) {
+    auto refreshRatingStars = [this]() {
         if(m_currentPlaylist) {
             reset(m_currentPlaylist->playlistTracks());
         }
@@ -1092,6 +1063,10 @@ bool PlaylistModel::dropMimeData(const QMimeData* data, Qt::DropAction action, i
         Q_EMIT tracksMoved({operation});
 
         return true;
+    }
+
+    if(m_currentPlaylist && (m_currentPlaylist->isAutoPlaylist() || m_currentPlaylist->isLocked())) {
+        return false;
     }
 
     TrackList tracks;
@@ -2464,6 +2439,23 @@ QVariant PlaylistModel::trackData(PlaylistItem* item, const QModelIndex& index, 
     const bool singleColumnMode = m_columns.empty();
     const bool isPlaying        = trackIsPlaying(playlistTrack, item->index());
 
+    const auto ratingForTrack = [this, &track]() {
+        StarRating rating{track.rating(),
+                          5,
+                          m_editorAppearance.starRatingSize,
+                          m_editorAppearance.ratingStarColours,
+                          m_editorAppearance.unratedStarColour,
+                          m_editorAppearance.ratingSymbols};
+        rating.setSymbolFont(m_editorAppearance.ratingSymbolFont);
+        return rating;
+    };
+    const auto loveForTrack = [this, &track]() {
+        HeartValue love{track.isLoved(), m_editorAppearance.loveHeartSize, m_editorAppearance.loveHeartColour,
+                        m_editorAppearance.unlovedHeartColour, m_editorAppearance.loveSymbols};
+        love.setSymbolFont(m_editorAppearance.loveSymbolFont);
+        return love;
+    };
+
     const auto getCoverData = [this, &index, column]() -> std::optional<std::pair<const Track*, QSize>> {
         if(std::cmp_greater_equal(column, m_columnSizes.size())) {
             return {};
@@ -2515,13 +2507,11 @@ QVariant PlaylistModel::trackData(PlaylistItem* item, const QModelIndex& index, 
 
         const QString writeField = normaliseWriteField(playlistColumn.writeField);
         if(isLoveWriteField(writeField)) {
-            return QVariant::fromValue(
-                HeartValue{track.isLoved(), m_loveHeartSize, m_loveHeartColour, m_unlovedHeartColour});
+            return QVariant::fromValue(loveForTrack());
         }
         if(isRatingWriteField(writeField)) {
             if(playlistColumn.field == QLatin1StringView{Constants::RatingEditor}) {
-                return QVariant::fromValue(
-                    StarRating{track.rating(), 5, m_starRatingSize, m_ratingStarColours, m_unratedStarColour});
+                return QVariant::fromValue(ratingForTrack());
             }
             if(writeField.compare(QLatin1StringView{Constants::MetaData::RatingEditor}, Qt::CaseInsensitive) == 0) {
                 return track.rating() > 0 ? QString::number(track.rating()) : QString{};
@@ -2534,11 +2524,10 @@ QVariant PlaylistModel::trackData(PlaylistItem* item, const QModelIndex& index, 
 
     if(role == Qt::DisplayRole && !m_columns.empty()) {
         if(m_columns.at(column).field == QLatin1StringView{Constants::RatingEditor}) {
-            return StarRating{track.rating(), 5, m_starRatingSize, m_ratingStarColours, m_unratedStarColour};
+            return ratingForTrack();
         }
         if(m_columns.at(column).field == QLatin1StringView{Constants::LoveEditor}) {
-            return QVariant::fromValue(
-                HeartValue{track.isLoved(), m_loveHeartSize, m_loveHeartColour, m_unlovedHeartColour});
+            return QVariant::fromValue(loveForTrack());
         }
     }
 
@@ -2597,7 +2586,11 @@ QVariant PlaylistModel::trackData(PlaylistItem* item, const QModelIndex& index, 
             return isRatingWriteField(writeField) ? QVariant{} : writeField;
         }
         case PlaylistItem::Role::UniformHeightKey:
-            return uniformHeightKey(PlaylistItem::Track, trackItem.size().height(), trackItem.rowHeight() <= 0);
+            return uniformHeightKey(
+                PlaylistItem::Track,
+                trackItem.sizeWithInlineEditors(m_editorAppearance.loveHeartSize, m_editorAppearance.starRatingSize)
+                    .height(),
+                trackItem.rowHeight() <= 0);
         case PlaylistItem::Role::UsesStyleBaseHeight:
             return trackItem.rowHeight() <= 0;
         case Qt::BackgroundRole: {
@@ -2635,10 +2628,21 @@ QVariant PlaylistModel::trackData(PlaylistItem* item, const QModelIndex& index, 
         }
         case Qt::SizeHintRole: {
             if(m_columns.empty()) {
-                return trackItem.size();
+                return trackItem.sizeWithInlineEditors(m_editorAppearance.loveHeartSize,
+                                                       m_editorAppearance.starRatingSize);
             }
             return trackItem.size(column);
         }
+        case PlaylistItem::Role::InlineEditors:
+            if(!singleColumnMode
+               || (!hasInlineTrackEditors(trackItem.left()) && !hasInlineTrackEditors(trackItem.right()))) {
+                return {};
+            }
+            return QVariant::fromValue(
+                InlineTrackEditors{.love            = loveForTrack(),
+                                   .rating          = ratingForTrack(),
+                                   .hideEmptyLove   = m_editorAppearance.loveEditorOnlyOnHover,
+                                   .hideEmptyRating = m_editorAppearance.ratingEditorOnlyOnHover});
         case PlaylistItem::Role::PlayingIcon: {
             switch(trackItem.playingIcon()) {
                 case ScriptPlayingIcon::Play:

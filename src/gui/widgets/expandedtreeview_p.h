@@ -25,6 +25,7 @@
 #include <QPointer>
 #include <QVariantAnimation>
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -118,6 +119,7 @@ public:
     int viewIndex(const QModelIndex& index) const;
     void clearViewItems();
     void insertViewItems(int pos, int count, const ExpandedTreeViewItem& viewItem);
+    bool appendTreeRows(const QModelIndex& parent, int first, int last);
     bool hasVisibleChildren(const QModelIndex& parent) const;
     bool isIndexEnabled(const QModelIndex& index) const;
     bool isItemDisabled(int i) const;
@@ -141,6 +143,7 @@ public:
     std::vector<std::pair<int, int>> columnRanges(const QModelIndex& topIndex, const QModelIndex& bottomIndex) const;
     std::vector<QRect> rectsToPaint(const QModelIndex& index, const QStyleOptionViewItem& option, int y) const;
 
+    [[nodiscard]] QMargins iconGridMargins() const;
     void updateExpansionGeometry();
     void updateExpansionAnimation(const QVariant& value);
     QPixmap captureExpansion() const;
@@ -159,6 +162,7 @@ public:
     using ViewMode       = ExpandedTreeView::ViewMode;
     using CaptionDisplay = ExpandedTreeView::CaptionDisplay;
 
+    CoverFlowSettings m_coverFlow;
     ViewMode m_viewMode{ViewMode::Tree};
     CaptionDisplay m_captionDisplay{CaptionDisplay::Bottom};
     int m_flowColumnGap{16};
@@ -169,10 +173,16 @@ public:
     int m_iconItemColumn{-1};
     int m_iconHorizontalGap{-1};
     int m_iconVerticalGap{10};
+    std::optional<QMargins> m_iconGridMargins;
+    int m_iconItemCornerRadius{0};
+    QMargins m_iconItemArtworkMargins;
     bool m_autoFitArtwork{false};
     QSize m_effectiveIconSize;
+    QSize m_minIconSize{1, 1};
+    QSize m_maxIconSize{QWIDGETSIZE_MAX, QWIDGETSIZE_MAX};
     bool m_useIconGapsForSideCaptions{false};
     bool m_uniformRowHeights{false};
+    bool m_wordWrap{false};
     bool m_selectBeforeDrag{false};
     bool m_selectIgnoreParents{false};
     bool m_sortingEnabled{false};
@@ -196,6 +206,7 @@ public:
 
     mutable QBasicTimer m_delayedLayout;
     QPoint m_pressedPos;
+    QPersistentModelIndex m_pressedIndex;
     bool m_canStartDrag{true};
     QPersistentModelIndex m_hoverIndex;
     QPoint m_dragPos;
@@ -203,6 +214,7 @@ public:
     QPersistentModelIndex m_expandedIndex;
     QRect m_expansionRect;
     bool m_expansionAnimated{true};
+    bool m_expansionMatchGridMargins{false};
     QVariantAnimation m_expansionAnimation;
     QPersistentModelIndex m_expansionAnimationIndex;
     QPersistentModelIndex m_expansionAnimationNextIndex;

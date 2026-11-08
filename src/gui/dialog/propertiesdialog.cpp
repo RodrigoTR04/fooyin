@@ -96,9 +96,9 @@ TrackList filterDuplicateTracks(const TrackList& tracks)
 bool metadataEqual(const Track& lhs, const Track& rhs)
 {
     return lhs.metadata() == rhs.metadata() && lhs.serialiseExtraTags() == rhs.serialiseExtraTags()
-        && lhs.removedTags() == rhs.removedTags() && lhs.rgTrackGain() == rhs.rgTrackGain()
-        && lhs.rgTrackPeak() == rhs.rgTrackPeak() && lhs.rgAlbumGain() == rhs.rgAlbumGain()
-        && lhs.rgAlbumPeak() == rhs.rgAlbumPeak();
+        && lhs.serialiseExtraProperties() == rhs.serialiseExtraProperties() && lhs.removedTags() == rhs.removedTags()
+        && lhs.rgTrackGain() == rhs.rgTrackGain() && lhs.rgTrackPeak() == rhs.rgTrackPeak()
+        && lhs.rgAlbumGain() == rhs.rgAlbumGain() && lhs.rgAlbumPeak() == rhs.rgAlbumPeak();
 }
 
 bool statEqual(const Track& lhs, const Track& rhs)
@@ -1340,9 +1340,9 @@ void PropertiesDialog::show(const TrackList& tracks)
 
     QObject::connect(dialog, &QDialog::finished, dialog, &PropertiesDialogWidget::saveState);
 
-    dialog->show();
-
+    dialog->adjustSize();
     dialog->restoreState();
+    dialog->show();
 }
 } // namespace Fooyin
 

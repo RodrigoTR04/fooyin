@@ -312,6 +312,66 @@ void QueueViewer::applyConfig(const ConfigData& config)
     Q_EMIT configChanged();
 }
 
+QueueViewer::ConfigData QueueViewer::configFromLayout(const QJsonObject& layout) const
+{
+    ConfigData config{defaultConfig()};
+    config.background.loadLayout(layout);
+
+    if(layout.contains("DisplayScript"_L1)) {
+        config.displayScript = layout.value("DisplayScript"_L1).toString();
+    }
+    else if(layout.contains("LeftScript"_L1) || layout.contains("RightScript"_L1)) {
+        const QString left   = layout.contains("LeftScript"_L1)
+                                 ? layout.value("LeftScript"_L1).toString()
+                                 : m_settings->fileValue(QueueViewerLeftScriptKey, LegacyLeftScript).toString();
+        const QString right  = layout.contains("RightScript"_L1)
+                                 ? layout.value("RightScript"_L1).toString()
+                                 : m_settings->fileValue(QueueViewerRightScriptKey, LegacyRightScript).toString();
+        config.displayScript = combineAlignedScripts(left, right);
+    }
+
+    config.showCurrent = layout.value("ShowCurrent"_L1).toBool(config.showCurrent);
+    config.showIcon    = layout.value("ShowIcon"_L1).toBool(config.showIcon);
+
+    if(layout.contains("IconWidth"_L1) && layout.contains("IconHeight"_L1)) {
+        config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
+    }
+
+    config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
+    config.showHeader          = layout.value("ShowHeader"_L1).toBool(config.showHeader);
+    config.showScrollBar       = layout.value("ShowScrollbar"_L1).toBool(config.showScrollBar);
+    config.alternatingRows     = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
+
+    if(layout.contains("DisplayMode"_L1)
+       && layout.value("DisplayMode"_L1).toInt() == static_cast<int>(DisplayMode::UpcomingTracks)) {
+        config.displayMode = DisplayMode::UpcomingTracks;
+    }
+
+    if(!config.iconSize.isValid()) {
+        config.iconSize = factoryConfig().iconSize;
+    }
+    config.artworkCornerRadius = std::clamp(config.artworkCornerRadius, 0, 100);
+
+    return config;
+}
+
+void QueueViewer::saveConfigToLayout(const ConfigData& config, QJsonObject& layout) const
+{
+    config.background.saveLayout(layout);
+    layout.remove("LeftScript"_L1);
+    layout.remove("RightScript"_L1);
+    layout["DisplayScript"_L1]       = config.displayScript;
+    layout["ShowCurrent"_L1]         = config.showCurrent;
+    layout["ShowIcon"_L1]            = config.showIcon;
+    layout["IconWidth"_L1]           = config.iconSize.width();
+    layout["IconHeight"_L1]          = config.iconSize.height();
+    layout["ArtworkCornerRadius"_L1] = config.artworkCornerRadius;
+    layout["ShowHeader"_L1]          = config.showHeader;
+    layout["ShowScrollbar"_L1]       = config.showScrollBar;
+    layout["AlternatingRows"_L1]     = config.alternatingRows;
+    layout["DisplayMode"_L1]         = static_cast<int>(config.displayMode);
+}
+
 void QueueViewer::contextMenuEvent(QContextMenuEvent* event)
 {
     auto* menu = new QMenu(this);
@@ -571,6 +631,8 @@ void QueueViewer::setupConnections()
         }
     });
     QObject::connect(m_playerController, &PlayerController::currentTrackUpdated, this, &QueueViewer::resetModel);
+    QObject::connect(m_playerController, &PlayerController::playModeChanged, this,
+                     [resetQueueModel]() { resetQueueModel(false); });
     QObject::connect(m_playerController, &PlayerController::playbackQueuePositionChanged, this, [this]() {
         if(!m_updatesPausedForTrackChange) {
             if(!m_model->updatePlaybackPosition(m_playerController->playbackQueue())) {
@@ -1152,10 +1214,13 @@ std::vector<int> QueueViewer::queueIndexesToSort(SortScope scope) const
 
     indexes.clear();
 
-    const auto itemCount = m_playerController->playbackQueue().items().size();
+    const int itemCount = m_model->rowCount({});
     indexes.reserve(itemCount);
-    for(size_t i{static_cast<size_t>(std::max(firstIndex, 0))}; i < itemCount; ++i) {
-        indexes.push_back(static_cast<int>(i));
+    for(int row{0}; row < itemCount; ++row) {
+        const int queueIndex = m_model->queueIndex(m_model->index(row, 0, {}));
+        if(queueIndex >= firstIndex) {
+            indexes.push_back(queueIndex);
+        }
     }
 
     return indexes;
@@ -1191,67 +1256,6 @@ void QueueViewer::insertQueueTracks(int row, const QueueTracks& tracksToInsert) 
     }
 
     m_playerController->insertQueueTracks(row, tracksToInsert);
-}
-
-QueueViewer::ConfigData QueueViewer::configFromLayout(const QJsonObject& layout) const
-{
-    ConfigData config{defaultConfig()};
-
-    config.background.loadLayout(layout);
-
-    if(layout.contains("DisplayScript"_L1)) {
-        config.displayScript = layout.value("DisplayScript"_L1).toString();
-    }
-    else if(layout.contains("LeftScript"_L1) || layout.contains("RightScript"_L1)) {
-        const QString left   = layout.contains("LeftScript"_L1)
-                                 ? layout.value("LeftScript"_L1).toString()
-                                 : m_settings->fileValue(QueueViewerLeftScriptKey, LegacyLeftScript).toString();
-        const QString right  = layout.contains("RightScript"_L1)
-                                 ? layout.value("RightScript"_L1).toString()
-                                 : m_settings->fileValue(QueueViewerRightScriptKey, LegacyRightScript).toString();
-        config.displayScript = combineAlignedScripts(left, right);
-    }
-
-    config.showCurrent = layout.value("ShowCurrent"_L1).toBool(config.showCurrent);
-    config.showIcon    = layout.value("ShowIcon"_L1).toBool(config.showIcon);
-
-    if(layout.contains("IconWidth"_L1) && layout.contains("IconHeight"_L1)) {
-        config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
-    }
-
-    config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
-    config.showHeader          = layout.value("ShowHeader"_L1).toBool(config.showHeader);
-    config.showScrollBar       = layout.value("ShowScrollbar"_L1).toBool(config.showScrollBar);
-    config.alternatingRows     = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
-
-    if(layout.contains("DisplayMode"_L1)
-       && layout.value("DisplayMode"_L1).toInt() == static_cast<int>(DisplayMode::UpcomingTracks)) {
-        config.displayMode = DisplayMode::UpcomingTracks;
-    }
-
-    if(!config.iconSize.isValid()) {
-        config.iconSize = factoryConfig().iconSize;
-    }
-    config.artworkCornerRadius = std::clamp(config.artworkCornerRadius, 0, 100);
-
-    return config;
-}
-
-void QueueViewer::saveConfigToLayout(const ConfigData& config, QJsonObject& layout) const
-{
-    config.background.saveLayout(layout);
-    layout.remove("LeftScript"_L1);
-    layout.remove("RightScript"_L1);
-    layout["DisplayScript"_L1]       = config.displayScript;
-    layout["ShowCurrent"_L1]         = config.showCurrent;
-    layout["ShowIcon"_L1]            = config.showIcon;
-    layout["IconWidth"_L1]           = config.iconSize.width();
-    layout["IconHeight"_L1]          = config.iconSize.height();
-    layout["ArtworkCornerRadius"_L1] = config.artworkCornerRadius;
-    layout["ShowHeader"_L1]          = config.showHeader;
-    layout["ShowScrollbar"_L1]       = config.showScrollBar;
-    layout["AlternatingRows"_L1]     = config.alternatingRows;
-    layout["DisplayMode"_L1]         = static_cast<int>(config.displayMode);
 }
 
 void QueueViewer::saveTopLevelState()

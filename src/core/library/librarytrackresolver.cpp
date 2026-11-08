@@ -20,6 +20,7 @@
 #include "librarytrackresolver.h"
 
 #include "database/trackdatabase.h"
+#include "librarycuetrackreloader.h"
 #include "libraryscanstate.h"
 #include "libraryscanutils.h"
 #include "libraryscanwriter.h"
@@ -112,6 +113,11 @@ LibraryTrackResolver::LibraryTrackResolver(LibraryInfo currentLibrary, PlaylistL
                            std::move(flushWrites)}
 { }
 
+void LibraryTrackResolver::setReadCancellationToken(std::stop_token token)
+{
+    m_readCancellationToken = std::move(token);
+}
+
 TrackList LibraryTrackResolver::readTracks(const QString& filepath)
 {
     if(m_audioLoader->isArchive(filepath)) {
@@ -155,6 +161,27 @@ TrackList LibraryTrackResolver::readTracks(const QString& filepath)
     return tracks;
 }
 
+Track LibraryTrackResolver::readUrlTrack(const Track& track)
+{
+    const QString key = track.uniqueFilepath();
+    if(const auto it = m_remoteTracks.find(key); it != m_remoteTracks.end()) {
+        return it->second;
+    }
+
+    Track readTrack{track};
+    readTrack.setMetadataStore(m_metadataStore);
+    if(m_state->mayRun()) {
+        // An unavailable server shouldn't prevent a URL from being added
+        if(!m_audioLoader->readTrackMetadata(readTrack, m_readCancellationToken)) {
+            qCDebug(LIB_SCANNER) << "Could not read metadata from URL:" << key;
+        }
+    }
+    readTrack.generateHash();
+    m_remoteTracks.emplace(key, readTrack);
+    m_state->progressScanned(readTrack.prettyFilepath());
+    return readTrack;
+}
+
 TrackList LibraryTrackResolver::readPlaylist(const QString& filepath)
 {
     return readPlaylist(QUrl::fromLocalFile(filepath));
@@ -168,7 +195,7 @@ TrackList LibraryTrackResolver::readPlaylist(const QUrl& url)
     for(Track playlistTrack : playlistTracks) {
         if(const auto existingTrack = m_state->findExistingTrackByUniqueFilepath(playlistTrack)) {
             applyExistingTrackIdentity(playlistTrack, existingTrack.value());
-            mergeReloadedTrackStats(playlistTrack, existingTrack.value(), m_reloadOptions);
+            mergeReloadedTrack(playlistTrack, existingTrack.value(), m_reloadOptions);
         }
 
         playlistTrack.generateHash();
@@ -176,135 +203,6 @@ TrackList LibraryTrackResolver::readPlaylist(const QUrl& url)
     }
 
     return tracks;
-}
-
-std::shared_ptr<RemoteDownloadHandle>
-LibraryTrackResolver::readPlaylistAsync(const QUrl& url, QObject* context,
-                                        std::function<void(bool completed, TrackList tracks)> callback)
-{
-    if(!isRemotePlaylistUrl(url)) {
-        callback(true, readPlaylist(url));
-        return {};
-    }
-
-    if(!url.isValid()) {
-        callback(false, {});
-        return {};
-    }
-
-    const QString extension = playlistExtension(url);
-    auto* parser            = m_playlistLoader->parserForExtension(extension);
-    if(!parser) {
-        callback(false, {});
-        return {};
-    }
-
-    auto readEntry       = std::make_shared<PlaylistParser::ReadPlaylistEntry>();
-    readEntry->readTrack = [this, readEntry](const Track& playlistTrack) {
-        if(!m_state->mayRun()) {
-            readEntry->cancel = true;
-            return playlistTrack;
-        }
-
-        Track readTrack{playlistTrack};
-        readTrack.setMetadataStore(m_metadataStore);
-
-        if(playlistTrack.isRemote()) {
-            return readTrack;
-        }
-
-        readFileProperties(readTrack);
-
-        if(!m_audioLoader->readTrackMetadata(readTrack)) {
-            return playlistTrack;
-        }
-
-        readTrack.generateHash();
-        m_state->progressScanned(readTrack.prettyFilepath());
-
-        return readTrack;
-    };
-    readEntry->canLoadTrack = [this](const Track& playlistTrack) {
-        if(playlistTrack.isRemote()) {
-            return true;
-        }
-        return static_cast<bool>(m_audioLoader->loadDecoderForTrack(playlistTrack).decoder);
-    };
-
-    return m_remoteIo->download(
-        url, context,
-        [this, parser, url, readEntry, callback = std::move(callback)](std::optional<QByteArray> data,
-                                                                       const QString& error) mutable {
-            if(!data) {
-                qCInfo(LIB_SCANNER) << "Could not download playlist" << url << "for reading:" << error;
-                callback(false, {});
-                return;
-            }
-
-            QBuffer buffer{&data.value()};
-            if(!buffer.open(QIODevice::ReadOnly)) {
-                callback(false, {});
-                return;
-            }
-
-            TrackList parsedTracks
-                = parser->readPlaylist(&buffer, url.toString(), {}, *readEntry, m_playlistSkipMissing);
-            TrackList tracks;
-            tracks.reserve(parsedTracks.size());
-
-            for(Track playlistTrack : parsedTracks) {
-                if(const auto existingTrack = m_state->findExistingTrackByUniqueFilepath(playlistTrack)) {
-                    applyExistingTrackIdentity(playlistTrack, existingTrack.value());
-                    mergeReloadedTrackStats(playlistTrack, existingTrack.value(), m_reloadOptions);
-                }
-
-                playlistTrack.generateHash();
-                tracks.push_back(playlistTrack);
-            }
-
-            for(auto& track : tracks) {
-                track.setMetadataStore(m_metadataStore);
-            }
-
-            callback(m_state->mayRun(), std::move(tracks));
-        });
-}
-
-size_t LibraryTrackResolver::countPlaylistTracks(const QString& path) const
-{
-    return countPlaylistTracks(QUrl::fromLocalFile(path));
-}
-
-size_t LibraryTrackResolver::countPlaylistTracks(const QUrl& url) const
-{
-    if(!url.isValid()) {
-        return 0;
-    }
-
-    const QString extension = playlistExtension(url);
-    auto* parser            = m_playlistLoader->parserForExtension(extension);
-    if(!parser) {
-        return 0;
-    }
-
-    if(isRemotePlaylistUrl(url)) {
-        return 0;
-    }
-
-    const QString path = url.toLocalFile();
-    if(path.isEmpty()) {
-        return 0;
-    }
-
-    QFile playlistFile{path};
-    if(!playlistFile.open(QIODevice::ReadOnly)) {
-        return 0;
-    }
-
-    QDir dir{path};
-    dir.cdUp();
-
-    return parser->countEntries(&playlistFile, path, dir);
 }
 
 TrackList LibraryTrackResolver::readPlaylistTracks(const QString& path)
@@ -335,7 +233,7 @@ TrackList LibraryTrackResolver::readPlaylistTracks(const QUrl& url)
         readTrack.setMetadataStore(m_metadataStore);
 
         if(playlistTrack.isRemote()) {
-            return readTrack;
+            return readUrlTrack(readTrack);
         }
 
         readFileProperties(readTrack);
@@ -379,6 +277,188 @@ TrackList LibraryTrackResolver::readPlaylistTracks(const QUrl& url)
         track.setMetadataStore(m_metadataStore);
     }
     return tracks;
+}
+
+std::shared_ptr<RemoteDownloadHandle>
+LibraryTrackResolver::readPlaylistAsync(const QUrl& url, QObject* context,
+                                        std::function<void(bool completed, TrackList tracks)> callback)
+{
+    if(!isRemotePlaylistUrl(url)) {
+        callback(true, readPlaylist(url));
+        return {};
+    }
+
+    if(!url.isValid()) {
+        callback(false, {});
+        return {};
+    }
+
+    const QString extension = playlistExtension(url);
+    auto* parser            = m_playlistLoader->parserForExtension(extension);
+    if(!parser) {
+        callback(false, {});
+        return {};
+    }
+
+    return m_remoteIo->download(
+        url, context,
+        [this, parser, url, callback = std::move(callback)](std::optional<QByteArray> data,
+                                                            const QString& error) mutable {
+            if(!data) {
+                qCInfo(LIB_SCANNER) << "Could not download playlist" << url << "for reading:" << error;
+                callback(false, {});
+                return;
+            }
+
+            QBuffer buffer{&data.value()};
+            if(!buffer.open(QIODevice::ReadOnly)) {
+                callback(false, {});
+                return;
+            }
+
+            PlaylistParser::ReadPlaylistEntry readEntry;
+            readEntry.readTrack = [this, &readEntry](const Track& playlistTrack) {
+                if(!m_state->mayRun()) {
+                    readEntry.cancel = true;
+                    return playlistTrack;
+                }
+
+                auto readTrack{playlistTrack};
+                readTrack.setMetadataStore(m_metadataStore);
+
+                if(playlistTrack.isRemote()) {
+                    return readUrlTrack(readTrack);
+                }
+
+                readFileProperties(readTrack);
+
+                if(!m_audioLoader->readTrackMetadata(readTrack)) {
+                    return playlistTrack;
+                }
+
+                readTrack.generateHash();
+                m_state->progressScanned(readTrack.prettyFilepath());
+
+                return readTrack;
+            };
+            readEntry.canLoadTrack = [this](const Track& playlistTrack) {
+                if(playlistTrack.isRemote()) {
+                    return true;
+                }
+                return static_cast<bool>(m_audioLoader->loadDecoderForTrack(playlistTrack).decoder);
+            };
+
+            const TrackList parsedTracks
+                = parser->readPlaylist(&buffer, url.toString(), {}, readEntry, m_playlistSkipMissing);
+            TrackList tracks;
+            tracks.reserve(parsedTracks.size());
+
+            for(Track playlistTrack : parsedTracks) {
+                if(const auto existingTrack = m_state->findExistingTrackByUniqueFilepath(playlistTrack)) {
+                    applyExistingTrackIdentity(playlistTrack, existingTrack.value());
+                    mergeReloadedTrack(playlistTrack, existingTrack.value(), m_reloadOptions);
+                }
+
+                playlistTrack.generateHash();
+                tracks.push_back(playlistTrack);
+            }
+
+            for(auto& track : tracks) {
+                track.setMetadataStore(m_metadataStore);
+            }
+
+            callback(m_state->mayRun(), std::move(tracks));
+        });
+}
+
+TrackList LibraryTrackResolver::refreshExternalTracks(const TrackList& tracks)
+{
+    TrackList refreshedTracks{tracks};
+    TrackList cueTracks;
+
+    for(Track& track : refreshedTracks) {
+        if(!m_state->mayRun()) {
+            return refreshedTracks;
+        }
+        if(track.isInLibrary()) {
+            continue;
+        }
+        if(track.hasCue()) {
+            cueTracks.push_back(track);
+            continue;
+        }
+
+        Track refreshedTrack{track.filepath(), track.subsong(), m_metadataStore};
+        if(!m_audioLoader->readTrackMetadata(refreshedTrack, m_readCancellationToken)) {
+            continue;
+        }
+
+        applyExistingTrackIdentity(refreshedTrack, track);
+        mergeReloadedTrack(refreshedTrack, track, m_reloadOptions);
+        readFileProperties(refreshedTrack);
+        refreshedTrack.generateHash();
+        track = refreshedTrack;
+        m_writer->updateTrack(track);
+        m_flushWrites();
+    }
+
+    const CueTrackReloader cueReloader{m_audioLoader, m_metadataStore};
+    const CueTrackReloadResult cueResult = cueReloader.reload(
+        cueTracks, false, m_reloadOptions, [this]() { return m_state->mayRun(); },
+        [this](int /*count*/, const QString& source) { m_state->reportProgress(source); });
+
+    for(const Track& track : cueResult.updatedTracks) {
+        if(!m_state->mayRun()) {
+            break;
+        }
+        if(!track.metadataWasRead()) {
+            continue;
+        }
+        if(const auto it = std::ranges::find(refreshedTracks, track.id(), &Track::id); it != refreshedTracks.end()) {
+            *it = track;
+            m_writer->updateTrack(track);
+            m_flushWrites();
+        }
+    }
+
+    return refreshedTracks;
+}
+
+size_t LibraryTrackResolver::countPlaylistTracks(const QString& path) const
+{
+    return countPlaylistTracks(QUrl::fromLocalFile(path));
+}
+
+size_t LibraryTrackResolver::countPlaylistTracks(const QUrl& url) const
+{
+    if(!url.isValid()) {
+        return 0;
+    }
+
+    const QString extension = playlistExtension(url);
+    auto* parser            = m_playlistLoader->parserForExtension(extension);
+    if(!parser) {
+        return 0;
+    }
+
+    if(isRemotePlaylistUrl(url)) {
+        return 0;
+    }
+
+    const QString path = url.toLocalFile();
+    if(path.isEmpty()) {
+        return 0;
+    }
+
+    QFile playlistFile{path};
+    if(!playlistFile.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+
+    QDir dir{path};
+    dir.cdUp();
+
+    return parser->countEntries(&playlistFile, path, dir);
 }
 
 TrackList LibraryTrackResolver::readEmbeddedPlaylistTracks(const Track& track)
@@ -472,17 +552,20 @@ void LibraryTrackResolver::readCue(const QFileInfo& info, const bool onlyModifie
     }
 
     for(Track track : cueTracks) {
+        if(!m_state->mayRun()) {
+            return;
+        }
         const QString filepath = normalisePath(track.filepath());
 
         if(existingCueTracksByPath.contains(track.uniqueFilepath())) {
             const auto& existingTrack = existingCueTracksByPath.at(track.uniqueFilepath());
             applyExistingTrackIdentity(track, existingTrack);
-            mergeReloadedTrackStats(track, existingTrack, m_reloadOptions);
+            mergeReloadedTrack(track, existingTrack, m_reloadOptions);
             updateExistingTrack(track, filepath);
         }
         else if(const auto existingTrack = m_state->findExistingTrackByUniqueFilepath(track)) {
             applyExistingTrackIdentity(track, *existingTrack);
-            mergeReloadedTrackStats(track, *existingTrack, m_reloadOptions);
+            mergeReloadedTrack(track, *existingTrack, m_reloadOptions);
             updateExistingTrack(track, filepath);
         }
         else if(const int existingTrackId = m_trackDatabase->idForTrack(track); existingTrackId >= 0) {
@@ -546,10 +629,13 @@ void LibraryTrackResolver::readFile(const QFileInfo& info, const bool onlyModifi
         }
 
         for(Track track : tracks) {
+            if(!m_state->mayRun()) {
+                return;
+            }
             if(existingByPath.contains(track.uniqueFilepath())) {
                 const auto& existingTrack = existingByPath.at(track.uniqueFilepath());
                 applyExistingTrackIdentity(track, existingTrack);
-                mergeReloadedTrackStats(track, existingTrack, m_reloadOptions);
+                mergeReloadedTrack(track, existingTrack, m_reloadOptions);
             }
 
             const QDateTime createdTime{info.birthTime()};
@@ -590,10 +676,13 @@ void LibraryTrackResolver::readFile(const QFileInfo& info, const bool onlyModifi
         }
 
         for(Track track : tracks) {
+            if(!m_state->mayRun()) {
+                return;
+            }
             if(existingByPath.contains(track.uniqueFilepath())) {
                 const auto& existingTrack = existingByPath.at(track.uniqueFilepath());
                 applyExistingTrackIdentity(track, existingTrack);
-                mergeReloadedTrackStats(track, existingTrack, m_reloadOptions);
+                mergeReloadedTrack(track, existingTrack, m_reloadOptions);
             }
 
             updateExistingTrack(track, track.filepath());
@@ -755,12 +844,12 @@ void LibraryTrackResolver::updateExistingTrack(Track& track, const QString& file
         for(Track cueTrack : cueTracks) {
             if(const auto existingCueTrack = m_state->findExistingTrackByUniqueFilepath(cueTrack)) {
                 applyExistingTrackIdentity(cueTrack, *existingCueTrack);
-                mergeReloadedTrackStats(cueTrack, *existingCueTrack, m_reloadOptions);
+                mergeReloadedTrack(cueTrack, *existingCueTrack, m_reloadOptions);
             }
             else if(const Track movedCueTrack = m_state->matchRelocatedTrack(cueTrack);
                     movedCueTrack.isInLibrary() || movedCueTrack.isInDatabase()) {
                 applyExistingTrackIdentity(cueTrack, movedCueTrack);
-                mergeReloadedTrackStats(cueTrack, movedCueTrack, m_reloadOptions);
+                mergeReloadedTrack(cueTrack, movedCueTrack, m_reloadOptions);
             }
 
             setTrackProps(cueTrack, file);
@@ -798,7 +887,7 @@ void LibraryTrackResolver::readNewTrack(const QString& file)
         if(const Track refoundTrack = m_state->matchRelocatedTrack(track);
            refoundTrack.isInLibrary() || refoundTrack.isInDatabase()) {
             applyExistingTrackIdentity(track, refoundTrack);
-            mergeReloadedTrackStats(track, refoundTrack, m_reloadOptions);
+            mergeReloadedTrack(track, refoundTrack, m_reloadOptions);
             updateExistingTrack(track, file);
             continue;
         }
@@ -812,7 +901,7 @@ void LibraryTrackResolver::readNewTrack(const QString& file)
                 if(const Track refoundCueTrack = m_state->matchRelocatedTrack(cueTrack);
                    refoundCueTrack.isInLibrary() || refoundCueTrack.isInDatabase()) {
                     applyExistingTrackIdentity(cueTrack, refoundCueTrack);
-                    mergeReloadedTrackStats(cueTrack, refoundCueTrack, m_reloadOptions);
+                    mergeReloadedTrack(cueTrack, refoundCueTrack, m_reloadOptions);
                     updateExistingTrack(cueTrack, file);
                 }
                 else {

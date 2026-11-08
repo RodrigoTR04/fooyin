@@ -569,6 +569,55 @@ void PlaylistWidget::applyConfig(const ConfigData& config)
     Q_EMIT configChanged();
 }
 
+PlaylistWidget::ConfigData PlaylistWidget::configFromLayout(const QJsonObject& layout) const
+{
+    ConfigData config{defaultConfig()};
+
+    config.showHeader              = layout.value("ShowHeader"_L1).toBool(config.showHeader);
+    config.stickyHeaders           = layout.value("StickyHeaders"_L1).toBool(config.stickyHeaders);
+    config.stickySubheaders        = layout.value("StickySubheaders"_L1).toBool(config.stickySubheaders);
+    config.stickyArtwork           = layout.value("StickyArtwork"_L1).toBool(config.stickyArtwork);
+    config.showScrollBar           = layout.value("ShowScrollbar"_L1).toBool(config.showScrollBar);
+    config.alternatingRows         = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
+    config.imagePadding            = layout.value("ImagePadding"_L1).toInt(config.imagePadding);
+    config.imagePaddingTop         = layout.value("ImagePaddingTop"_L1).toInt(config.imagePaddingTop);
+    config.artworkCornerRadius     = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
+    config.artworkReflection       = layout.value("ArtworkReflection"_L1).toBool(config.artworkReflection);
+    config.artworkReflectionHeight = layout.value("ArtworkReflectionHeight"_L1).toInt(config.artworkReflectionHeight);
+    config.artworkReflectionOpacity
+        = layout.value("ArtworkReflectionOpacity"_L1).toInt(config.artworkReflectionOpacity);
+    config.artworkReflectionGap = layout.value("ArtworkReflectionGap"_L1).toInt(config.artworkReflectionGap);
+    config.background.loadLayout(layout);
+    config.doubleClickAction = static_cast<TrackAction>(
+        layout.value("DoubleClickAction"_L1).toInt(static_cast<int>(config.doubleClickAction)));
+    config.middleClickAction = static_cast<TrackAction>(
+        layout.value("MiddleClickAction"_L1).toInt(static_cast<int>(config.middleClickAction)));
+    config.startPlaybackOnSend = layout.value("StartPlaybackOnSend"_L1).toBool(config.startPlaybackOnSend);
+
+    return config;
+}
+
+void PlaylistWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& layout) const
+{
+    layout["ShowHeader"_L1]               = config.showHeader;
+    layout["StickyHeaders"_L1]            = config.stickyHeaders;
+    layout["StickySubheaders"_L1]         = config.stickySubheaders;
+    layout["StickyArtwork"_L1]            = config.stickyArtwork;
+    layout["ShowScrollbar"_L1]            = config.showScrollBar;
+    layout["AlternatingRows"_L1]          = config.alternatingRows;
+    layout["ImagePadding"_L1]             = config.imagePadding;
+    layout["ImagePaddingTop"_L1]          = config.imagePaddingTop;
+    layout["ArtworkCornerRadius"_L1]      = config.artworkCornerRadius;
+    layout["ArtworkReflection"_L1]        = config.artworkReflection;
+    layout["ArtworkReflectionHeight"_L1]  = config.artworkReflectionHeight;
+    layout["ArtworkReflectionOpacity"_L1] = config.artworkReflectionOpacity;
+    layout["ArtworkReflectionGap"_L1]     = config.artworkReflectionGap;
+    config.background.saveLayout(layout);
+    layout["DoubleClickAction"_L1]   = static_cast<int>(config.doubleClickAction);
+    layout["MiddleClickAction"_L1]   = static_cast<int>(config.middleClickAction);
+    layout["StartPlaybackOnSend"_L1] = config.startPlaybackOnSend;
+}
+
 void PlaylistWidget::searchEvent(const SearchRequest& request)
 {
     m_session->searchEvent(sessionHost(), request);
@@ -1125,12 +1174,13 @@ PlaylistWidget::PlaylistWidget(ActionManager* actionManager, PlaylistInteractor*
     m_playlistView->setInlineEditDelay(m_settings->value<PlaylistInlineEditDelayMs>());
     m_settings->subscribe<PlaylistInlineEditDelayMs>(m_playlistView, &PlaylistView::setInlineEditDelay);
 
-    m_playlistView->setRatingEditorOnlyOnHover(m_settings->value<Settings::Gui::RatingEditorOnlyOnHover>());
-    m_playlistView->setLoveEditorOnlyOnHover(m_settings->value<Settings::Gui::LoveEditorOnlyOnHover>());
-    m_settings->subscribe<Settings::Gui::RatingEditorOnlyOnHover>(m_playlistView,
-                                                                  &PlaylistView::setRatingEditorOnlyOnHover);
-    m_settings->subscribe<Settings::Gui::LoveEditorOnlyOnHover>(m_playlistView,
-                                                                &PlaylistView::setLoveEditorOnlyOnHover);
+    const auto updateEditorVisibility = [view = m_playlistView](const QVariant& value) {
+        const auto appearance = value.value<TrackEditorAppearance>();
+        view->setRatingEditorOnlyOnHover(appearance.ratingEditorOnlyOnHover);
+        view->setLoveEditorOnlyOnHover(appearance.loveEditorOnlyOnHover);
+    };
+    updateEditorVisibility(m_settings->value<Settings::Gui::TrackEditorAppearance>());
+    m_settings->subscribe<Settings::Gui::TrackEditorAppearance>(m_playlistView, updateEditorVisibility);
 
     QObject::connect(m_backgroundSource, &BackgroundImageSource::pixmapChanged, m_playlistView,
                      &PlaylistView::setBackgroundPixmap);
@@ -1896,55 +1946,6 @@ void PlaylistWidget::updateSpans()
 
     m_playlistView->setRatingColumn(ratingColumn);
     m_playlistView->setLovedColumn(loveColumn);
-}
-
-PlaylistWidget::ConfigData PlaylistWidget::configFromLayout(const QJsonObject& layout) const
-{
-    ConfigData config{defaultConfig()};
-
-    config.showHeader              = layout.value("ShowHeader"_L1).toBool(config.showHeader);
-    config.stickyHeaders           = layout.value("StickyHeaders"_L1).toBool(config.stickyHeaders);
-    config.stickySubheaders        = layout.value("StickySubheaders"_L1).toBool(config.stickySubheaders);
-    config.stickyArtwork           = layout.value("StickyArtwork"_L1).toBool(config.stickyArtwork);
-    config.showScrollBar           = layout.value("ShowScrollbar"_L1).toBool(config.showScrollBar);
-    config.alternatingRows         = layout.value("AlternatingRows"_L1).toBool(config.alternatingRows);
-    config.imagePadding            = layout.value("ImagePadding"_L1).toInt(config.imagePadding);
-    config.imagePaddingTop         = layout.value("ImagePaddingTop"_L1).toInt(config.imagePaddingTop);
-    config.artworkCornerRadius     = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
-    config.artworkReflection       = layout.value("ArtworkReflection"_L1).toBool(config.artworkReflection);
-    config.artworkReflectionHeight = layout.value("ArtworkReflectionHeight"_L1).toInt(config.artworkReflectionHeight);
-    config.artworkReflectionOpacity
-        = layout.value("ArtworkReflectionOpacity"_L1).toInt(config.artworkReflectionOpacity);
-    config.artworkReflectionGap = layout.value("ArtworkReflectionGap"_L1).toInt(config.artworkReflectionGap);
-    config.background.loadLayout(layout);
-    config.doubleClickAction = static_cast<TrackAction>(
-        layout.value("DoubleClickAction"_L1).toInt(static_cast<int>(config.doubleClickAction)));
-    config.middleClickAction = static_cast<TrackAction>(
-        layout.value("MiddleClickAction"_L1).toInt(static_cast<int>(config.middleClickAction)));
-    config.startPlaybackOnSend = layout.value("StartPlaybackOnSend"_L1).toBool(config.startPlaybackOnSend);
-
-    return config;
-}
-
-void PlaylistWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& layout) const
-{
-    layout["ShowHeader"_L1]               = config.showHeader;
-    layout["StickyHeaders"_L1]            = config.stickyHeaders;
-    layout["StickySubheaders"_L1]         = config.stickySubheaders;
-    layout["StickyArtwork"_L1]            = config.stickyArtwork;
-    layout["ShowScrollbar"_L1]            = config.showScrollBar;
-    layout["AlternatingRows"_L1]          = config.alternatingRows;
-    layout["ImagePadding"_L1]             = config.imagePadding;
-    layout["ImagePaddingTop"_L1]          = config.imagePaddingTop;
-    layout["ArtworkCornerRadius"_L1]      = config.artworkCornerRadius;
-    layout["ArtworkReflection"_L1]        = config.artworkReflection;
-    layout["ArtworkReflectionHeight"_L1]  = config.artworkReflectionHeight;
-    layout["ArtworkReflectionOpacity"_L1] = config.artworkReflectionOpacity;
-    layout["ArtworkReflectionGap"_L1]     = config.artworkReflectionGap;
-    config.background.saveLayout(layout);
-    layout["DoubleClickAction"_L1]   = static_cast<int>(config.doubleClickAction);
-    layout["MiddleClickAction"_L1]   = static_cast<int>(config.middleClickAction);
-    layout["StartPlaybackOnSend"_L1] = config.startPlaybackOnSend;
 }
 
 void PlaylistWidget::updateVisibleCoverPins()

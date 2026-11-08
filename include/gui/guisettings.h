@@ -21,6 +21,8 @@
 
 #include "fygui_export.h"
 
+#include <utils/lovesymbols.h>
+#include <utils/ratingsymbols.h>
 #include <utils/settings/settingsentry.h>
 
 #include <QFont>
@@ -28,7 +30,28 @@
 #include <QObject>
 #include <QPalette>
 
+#include <array>
+#include <optional>
+
 namespace Fooyin {
+struct TrackEditorAppearance
+{
+    int loveHeartSize{15};
+    int starRatingSize{17};
+    QColor loveHeartColour;
+    QColor unlovedHeartColour;
+    std::array<QColor, 5> ratingStarColours;
+    QColor unratedStarColour;
+    std::optional<RatingStarSymbols> ratingSymbols;
+    QFont ratingSymbolFont;
+    bool loveEditorOnlyOnHover{false};
+    bool ratingEditorOnlyOnHover{false};
+    std::optional<LoveSymbols> loveSymbols;
+    QFont loveSymbolFont;
+
+    friend bool operator==(const TrackEditorAppearance&, const TrackEditorAppearance&) = default;
+};
+
 struct ResolvedAppStyle
 {
     QPalette palette;
@@ -121,9 +144,17 @@ enum GuiSettings : uint32_t
     ABRepeatSeekOnAChange      = 62 | Type::Bool,
     VolumeControlStepSmall     = 63 | Type::Double,
     VolumeControlStepLarge     = 64 | Type::Double,
+    UseCustomRatingSymbols     = 65 | Type::Bool,
+    RatingSymbolFont           = 66 | Type::Variant,
+    UseCustomLoveSymbols       = 67 | Type::Bool,
+    LovedSymbol                = 68 | Type::String,
+    UnlovedSymbol              = 69 | Type::String,
+    LoveSymbolFont             = 70 | Type::Variant,
+    TrackEditorAppearance      = 71 | Type::Variant,
 };
 Q_ENUM_NS(GuiSettings)
 } // namespace Settings::Gui
 } // namespace Fooyin
 
 Q_DECLARE_METATYPE(Fooyin::ResolvedAppStyle)
+Q_DECLARE_METATYPE(Fooyin::TrackEditorAppearance)

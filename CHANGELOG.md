@@ -6,62 +6,114 @@
 
 - **Interface**
   - Add configurable inline track expansion to Library Filter ([#1841](https://github.com/fooyin/fooyin/pull/1841))
+  - Add configurable cover flow to Library Filter ([#701](https://github.com/fooyin/fooyin/issues/701), [#1867](https://github.com/fooyin/fooyin/pull/1867))
   - Add configurable animations when switching layouts
+  - Add configurable focused-widget and playing-track targets for supported shortcuts, including Rating ([#1363](https://github.com/fooyin/fooyin/issues/1363), [#1849](https://github.com/fooyin/fooyin/issues/1849))
+  - Add named presets to widget configuration dialogs
   - Add a shared global background for supported widgets
+- **Playback:** Add per-track preferences for automatic playback and crossfading ([#1844](https://github.com/fooyin/fooyin/issues/1844))
 
 ### Improvements
 
-- **Interface** 
+- **Audio & Playback**
+  - Add support for parallel audio conversion
+  - Expand CLI playback controls and align Play behaviour ([#1866](https://github.com/fooyin/fooyin/issues/1866))
+  - Add seeking support and import file properties for finite HTTP files
+  - Add an option to disable software volume control ([#1850](https://github.com/fooyin/fooyin/issues/1850))
+- **Interface**
   - Allow dialog actions in separate scopes to share shortcuts
   - Add a separate themed placeholder for artist artwork
-  - Add configurable backgrounds to Library Tree and most visualisations
+  - Add configurable backgrounds to Directory Browser, Library Tree, Radio Browser, and most visualisations
   - Increase the default Settings dialog size
   - Improve the Interface settings page layout
+  - Rename the Shortcuts settings page to Keyboard Shortcuts
   - Require Shift to split widgets during layout editing and show native modifier key names in hints
   - Make the Properties selection sidebar resizable
   - Improve wording in line with the KDE HIG ([#1810](https://github.com/fooyin/fooyin/pull/1810))
+  - Reuse cached artwork while requested thumbnail sizes load
   - Separate Library Tree grouping from display scripts and redesign the grouping preset editor
   - Show a script error indicator in Script Editor toolbars
+  - Update the Gallery layout to use inline Filter track expansion
+  - Add support for inline love and rating editors to single-column Playlist and Filter Expansion scripts ([#1859](https://github.com/fooyin/fooyin/issues/1859))
+  - Add optional custom symbols for love and rating editors ([#1685](https://github.com/fooyin/fooyin/issues/1685), [#1746](https://github.com/fooyin/fooyin/pull/1746))
+  - Normalise the Script Display configuration layout ([#1878](https://github.com/fooyin/fooyin/issues/1878))
+- **Library & Metadata**
+  - Improve repeated track lookup performance
+  - Store MP3 ratings in POPM fields instead of duplicate text fields when configured ([#1201](https://github.com/fooyin/fooyin/issues/1201))
+  - Add `%isremote%`, `%isvirtual%`, `%isinarchive%`, and `%islivestream%` track source variables for scripts
+  - Use atomic writes across saved application and media data
 - **Filters**
   - Add an automatic artwork fitting option
-  - Add artwork margin and playing track appearance settings
+  - Add separate grouping scripts for columns
+  - Add configurable artwork grid and artwork item margins
+  - Improve default artwork sizing and caption margins
+  - Add overlay artwork captions
+  - Add rounded hover, selection, and focus highlights when no margins are configured
   - Keep the current selection in view when resizing icons or the window
+  - Support track counts and other totals in column scripts
 - **Playlists**
   - Add a live track preview and matching track count to the autoplaylist editor
   - Support custom sorting scripts in autoplaylist rules ([#1806](https://github.com/fooyin/fooyin/issues/1806))
-- **Radio Browser:** Load and prepare tag filters without blocking the interface
+- **Lyrics**
+  - Add lyrics.ovh as an online source ([#1834](https://github.com/fooyin/fooyin/pull/1834))
+  - Add transfer timeouts to all online sources
+- **Radio Browser**
+  - Load and prepare tag filters without blocking the interface
+  - Add sizing and spacing controls with automatic icon/row fitting
+  - Improve artwork, selection, hover, and focus rendering
 
 ### Fixes
 
-- **Audio Conversion:** Limit sample format options to those supported by the selected encoder ([#1824](https://github.com/fooyin/fooyin/issues/1824))
-- **Global Shortcuts:** Fix keypad shortcuts and native key translation across platforms ([#1813](https://github.com/fooyin/fooyin/issues/1813))
-- **Filters:** Preserve group order across rebuilds and incremental updates ([#1829](https://github.com/fooyin/fooyin/issues/1829))
+- **Audio & Playback**
+  - Limit audio conversion sample formats to those supported by the selected encoder ([#1824](https://github.com/fooyin/fooyin/issues/1824))
+  - Recover playback after output initialisation fails ([#1843](https://github.com/fooyin/fooyin/issues/1843))
+  - Recover from failed track changes
+  - Fix premature EOF handling for HTTP sources ([#1854](https://github.com/fooyin/fooyin/issues/1854))
+  - Prevent DSP buffering from delaying gapless decoder adoption ([#1845](https://github.com/fooyin/fooyin/issues/1845))
+  - Keep ALSA writes non-blocking and within the available device capacity
+  - Fix playlist-led playback from detached Track Viewer windows
+  - Fix stale playing indicators after stopping and starting another track
+  - Fix CUE sample rate handling and chapter boundary rounding during verification
+- **Discord**
+  - Fix cover artwork tooltips for short album names ([#1842](https://github.com/fooyin/fooyin/pull/1842))
+  - Refresh stream metadata and handle live streams correctly ([#1869](https://github.com/fooyin/fooyin/issues/1869))
+- **Filters**
+  - Preserve group order across rebuilds and incremental updates ([#1829](https://github.com/fooyin/fooyin/issues/1829))
+  - Avoid applying the selection tint to artwork
 - **Interface**
+  - Avoid rebuilding the Log view when appending messages ([#1852](https://github.com/fooyin/fooyin/issues/1852))
   - Fix alpha selection in colour dialogs
   - Fix the autosearch delay slider skipping values when scrolling ([#1837](https://github.com/fooyin/fooyin/issues/1837))
+  - Fix Global Shortcuts keypad handling and native key translation across platforms ([#1813](https://github.com/fooyin/fooyin/issues/1813))
+  - Fix Directory Browser playing row highlights
+  - Fix sizing and selected icon colours in Icon Picker and Playlist Manager
   - Fix playing row colour blending with alternating row colours
   - Fix Properties selection sidebar text alignment and improve performance ([#1848](https://github.com/fooyin/fooyin/issues/1848))
+  - Restore saved Properties and Lyrics dialog state before showing them ([#1860](https://github.com/fooyin/fooyin/issues/1860))
+  - Fix Search connections after resetting layouts
+  - Fix Selection Info text alignment and hide empty section headers
+  - Fix selection text colours in custom item views on Windows
   - Preserve Library Tree double-click actions when single-click expansion is enabled
   - Fix Shift selection across wrapped rows ([#1808](https://github.com/fooyin/fooyin/issues/1808))
   - Refresh table actions after settings models reset, preventing crashes from stale actions ([#1827](https://github.com/fooyin/fooyin/issues/1827))
-- **Playback**
-  - Recover playback after output initialisation fails ([#1843](https://github.com/fooyin/fooyin/issues/1843))
-  - Prevent DSP buffering from delaying gapless decoder adoption ([#1845](https://github.com/fooyin/fooyin/issues/1845))
-  - Keep ALSA writes non-blocking and within the available device capacity
-  - Fix stale playing indicators after stopping and starting another track
-- **Playlists:** Fix dragging selected tracks from sorted autoplaylists ([#1821](https://github.com/fooyin/fooyin/issues/1821))
+  - Fix cached artwork loading when its storage is unavailable
+  - Fix Spectrum FFT window alignment with playback time ([#1795](https://github.com/fooyin/fooyin/issues/1795))
+- **Playlists**
+  - Fix dragging selected tracks from sorted autoplaylists ([#1821](https://github.com/fooyin/fooyin/issues/1821))
+  - Fix drag-and-drop, large grouped selections, and inline editing during modified selections ([#1853](https://github.com/fooyin/fooyin/pull/1853))
+  - Fix asynchronous scan lifetimes and persist imported batches atomically
+  - Refresh metadata when re-adding non-library tracks ([#1876](https://github.com/fooyin/fooyin/issues/1876))
 - **Scripting**
+  - Fix `$directory` and `$directory_path` levels ([#1840](https://github.com/fooyin/fooyin/issues/1840))
   - Fix numeric Library Tree count expressions ([#1774](https://github.com/fooyin/fooyin/issues/1774), [#1816](https://github.com/fooyin/fooyin/issues/1816))
   - Fix word capitalisation around apostrophes using ICU ([#1847](https://github.com/fooyin/fooyin/issues/1847))
   - Fix tag expansion with tree levels inside function arguments ([#1828](https://github.com/fooyin/fooyin/issues/1828))
   - Fix a `$swapprefix` crash with standalone articles
-- **Verification:** Fix CUE sample rate handling and chapter boundary rounding
-- **Visualisations:** Centre Spectrum FFT windows on playback time ([#1795](https://github.com/fooyin/fooyin/issues/1795))
 
 ### Build/System
 
 - **Packaging:** Fix plugin bundle RPATHs and runtime contents, and avoid duplicate Windows DLLs
-- **Translations:** Update translations and translation sources ([#1818](https://github.com/fooyin/fooyin/pull/1818), [#1819](https://github.com/fooyin/fooyin/pull/1819))
+- **Translations:** Update translations and translation sources ([#1818](https://github.com/fooyin/fooyin/pull/1818), [#1819](https://github.com/fooyin/fooyin/pull/1819), [#1873](https://github.com/fooyin/fooyin/pull/1873), [#1874](https://github.com/fooyin/fooyin/pull/1874))
 - **Windows:** Fix MSVC builds and test discovery during DLL deployment
 - **X11:** Require the XCB components used by Global Shortcuts
 

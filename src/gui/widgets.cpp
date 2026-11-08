@@ -34,6 +34,7 @@
 #include "controls/replaygainmodeselector.h"
 #include "controls/seekbar.h"
 #include "controls/volumecontrol.h"
+#include "dialog/playbackpropertiestab.h"
 #include "dirbrowser/dirbrowser.h"
 #include "dsp/dsppresetregistry.h"
 #include "dsp/dspsettingscontroller.h"
@@ -963,7 +964,7 @@ void Widgets::registerDspWidgets()
 
         widgetProvider->registerWidget(
             key, [this, dspId]() { return m_dspSettingsController->createLayoutWidget(dspId); },
-            settingsProvider->displayName());
+            settingsProvider->displayName(), {.supportsToolbar = settingsProvider->showAsToolbarWidget()});
         widgetProvider->setSubMenus(key, {tr("DSP")});
     }
 }
@@ -986,6 +987,9 @@ void Widgets::registerPropertiesTabs()
         });
         return new ArtworkProperties(m_core->audioLoader().get(), m_core->library(), m_coverRepository, m_settings,
                                      tracks, !canWrite, m_window);
+    });
+    m_gui->propertiesDialog()->addTab(tr("Playback"), [this](const TrackList& tracks) {
+        return new PlaybackPropertiesTab(m_core->library(), tracks, m_window);
     });
 }
 
@@ -1052,8 +1056,9 @@ void Widgets::refreshCoverWidgets()
 
 FyWidget* Widgets::createDirBrowser()
 {
-    auto* browser = new DirBrowser(m_core->audioLoader()->supportedFileExtensions(), m_gui->actionManager(),
-                                   m_playlistInteractor, m_settings, m_window);
+    auto* browser
+        = new DirBrowser(m_core->audioLoader()->supportedFileExtensions(), m_gui->actionManager(), m_playlistInteractor,
+                         m_gui->trackSelection(), m_coverRepository, m_settings, m_window);
 
     browser->playstateChanged(m_core->playerController()->playState());
     browser->activePlaylistChanged(m_core->playlistHandler()->activePlaylist());

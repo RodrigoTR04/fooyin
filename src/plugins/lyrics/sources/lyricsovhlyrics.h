@@ -19,16 +19,34 @@
 
 #pragma once
 
-#include <QStyledItemDelegate>
+#include "lyricsource.h"
 
-namespace Fooyin {
-class ExpansionTrackDelegate : public QStyledItemDelegate
+#include <QBasicTimer>
+#include <QUrl>
+
+class QTimerEvent;
+
+namespace Fooyin::Lyrics {
+class LyricsOvhLyrics : public LyricSource
 {
+    Q_OBJECT
+
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    using LyricSource::LyricSource;
 
-    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    [[nodiscard]] QString name() const override;
+    void search(const SearchParams& params) override;
+    void cancel() override;
 
-    [[nodiscard]] QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+protected:
+    void timerEvent(QTimerEvent* event) override;
+
+private:
+    void sendRequest();
+    void handleLyricReply();
+
+    SearchParams m_params;
+    QUrl m_requestUrl;
+    QBasicTimer m_requestTimer;
 };
-} // namespace Fooyin
+} // namespace Fooyin::Lyrics

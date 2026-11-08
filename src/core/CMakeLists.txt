@@ -52,7 +52,6 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/include/core/plugins/coreplugin.h
     ${CMAKE_SOURCE_DIR}/include/core/plugins/coreplugincontext.h
     ${CMAKE_SOURCE_DIR}/include/core/plugins/plugin.h
-    ${CMAKE_SOURCE_DIR}/include/core/ratingsymbols.h
     ${CMAKE_SOURCE_DIR}/include/core/scripting/expression.h
     ${CMAKE_SOURCE_DIR}/include/core/scripting/scriptcontextservice.h
     ${CMAKE_SOURCE_DIR}/include/core/scripting/scriptdefs.h
@@ -174,8 +173,10 @@ set(SOURCES
     engine/input/ffmpeg/ffmpegstream.h
     engine/input/ffmpeg/ffmpegutils.cpp
     engine/input/ffmpeg/ffmpegutils.h
-    engine/input/id3utils.cpp
-    engine/input/id3utils.h
+    engine/input/metadata/id3.cpp
+    engine/input/metadata/id3.h
+    engine/input/metadata/mpegproperties.cpp
+    engine/input/metadata/mpegproperties.h
     engine/input/playcounttagpolicy.cpp
     engine/input/playcounttagpolicy.h
     engine/input/ratingtagpolicy.cpp
@@ -300,6 +301,7 @@ set(SOURCES
     playback/playercontroller.cpp
     playback/playlistnavigator.cpp
     playback/playlistnavigator.h
+    playback/trackplaybacksettings.h
     playlist/parsers/cueparser.cpp
     playlist/parsers/cueparser.h
     playlist/parsers/m3uparser.cpp

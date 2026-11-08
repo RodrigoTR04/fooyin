@@ -22,12 +22,14 @@
 #include "fygui_export.h"
 
 #include <core/player/playbackqueue.h>
-#include <core/ratingsymbols.h>
 #include <core/track.h>
 #include <gui/theme/fytheme.h>
+#include <utils/ratingsymbols.h>
 #include <utils/starrating.h>
 
 #include <QByteArray>
+#include <QJsonObject>
+#include <QMargins>
 #include <QModelIndexList>
 #include <QStyleOptionViewItem>
 
@@ -54,6 +56,10 @@ namespace Gui {
 FYGUI_EXPORT void setContentsMargins(QLayout* layout, Qt::Edges edges, int margin);
 FYGUI_EXPORT void setContentsMargins(QWidget* widget, Qt::Edges edges, int margin);
 
+//! Reads Left, Top, Right and Bottom, using fallback values and clamping each margin to 0–999.
+FYGUI_EXPORT QMargins marginsFromJson(const QJsonObject& object, const QMargins& fallback);
+FYGUI_EXPORT QJsonObject marginsToJson(const QMargins& margins);
+
 struct OrientationMenuLabels
 {
     QString title;
@@ -75,6 +81,7 @@ FYGUI_EXPORT TrackIds sortTrackIdsForLibraryViewerPlaylist(MusicLibrary* library
 FYGUI_EXPORT QByteArray queueTracksToMimeData(const QueueTracks& tracks);
 FYGUI_EXPORT QueueTracks queueTracksFromMimeData(MusicLibrary* library, QByteArray data);
 FYGUI_EXPORT RatingStarSymbols ratingStarSymbols(const SettingsManager& settings);
+FYGUI_EXPORT std::optional<RatingStarSymbols> ratingEditorSymbols(const SettingsManager& settings);
 FYGUI_EXPORT QColor loveHeartColour(const SettingsManager& settings);
 FYGUI_EXPORT QColor unlovedHeartColour(const SettingsManager& settings);
 FYGUI_EXPORT QColor unratedStarColour(const SettingsManager& settings);
@@ -96,8 +103,24 @@ FYGUI_EXPORT QSize itemViewTextSizeHint(const QStyleOptionViewItem& option, cons
 FYGUI_EXPORT QRect itemViewTextRect(const QStyleOptionViewItem& option);
 FYGUI_EXPORT int itemViewTextMargin(const QWidget* widget, const QStyleOption* option = nullptr);
 
+//! Intersects the painter’s clip with a rounded rectangle and enables antialiasing.
+FYGUI_EXPORT void clipRoundedRect(QPainter& painter, const QRectF& rect, int radiusPercent);
+//! Corners touching squareEdges are left square.
+FYGUI_EXPORT void clipRoundedRect(QPainter& painter, const QRectF& rect, int radiusPercent, Qt::Edges squareEdges);
+FYGUI_EXPORT void drawRoundedPixmap(QPainter& painter, const QRectF& maskRect, const QPointF& position,
+                                    const QPixmap& pixmap, int radiusPercent);
 FYGUI_EXPORT void drawRoundedPixmap(QPainter& painter, const QRect& rect, Qt::Alignment alignment,
                                     const QPixmap& pixmap, int radiusPercent);
+//! Paints the style element within a rounded painter clip.
+FYGUI_EXPORT void drawRoundedStylePrimitive(QPainter* painter, QStyle::PrimitiveElement element,
+                                            const QStyleOption& option, const QWidget* widget, int radiusPercent);
+FYGUI_EXPORT void drawRoundedStyleControl(QPainter* painter, QStyle::ControlElement element, const QStyleOption& option,
+                                          const QWidget* widget, int radiusPercent);
+FYGUI_EXPORT void drawRoundedStylePrimitive(QPainter* painter, QStyle::PrimitiveElement element,
+                                            const QStyleOption& option, const QWidget* widget, int radiusPercent,
+                                            Qt::Edges squareEdges);
+FYGUI_EXPORT void drawRoundedStyleControl(QPainter* painter, QStyle::ControlElement element, const QStyleOption& option,
+                                          const QWidget* widget, int radiusPercent, Qt::Edges squareEdges);
 
 FYGUI_EXPORT void refreshItemViewPalette(QAbstractItemView* view);
 FYGUI_EXPORT void refreshItemViewPalette(QAbstractItemView* view, const QPalette& palette);

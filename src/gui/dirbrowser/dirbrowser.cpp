@@ -32,6 +32,7 @@
 #include <core/track.h>
 #include <gui/contextmenuids.h>
 #include <gui/contextmenuutils.h>
+#include <gui/coverprovider.h>
 #include <gui/guiconstants.h>
 #include <gui/guisettings.h>
 #include <gui/guiutils.h>
@@ -39,6 +40,7 @@
 #include <gui/playlist/playlistinteractor.h>
 #include <gui/trackselectioncontroller.h>
 #include <gui/widgets/autoheaderview.h>
+#include <gui/widgets/backgroundimagesource.h>
 #include <gui/widgets/toolbutton.h>
 #include <utils/actions/actionmanager.h>
 #include <utils/actions/command.h>
@@ -69,19 +71,22 @@
 using namespace Qt::StringLiterals;
 
 // Settings keys
-constexpr auto DirBrowserIconsKey        = u"DirectoryBrowser/Icons";
-constexpr auto DirBrowserDoubleClickKey  = u"DirectoryBrowser/DoubleClickBehaviour";
-constexpr auto DirBrowserMiddleClickKey  = u"DirectoryBrowser/MiddleClickBehaviour";
-constexpr auto DirBrowserModeKey         = u"DirectoryBrowser/Mode";
-constexpr auto DirBrowserListIndentKey   = u"DirectoryBrowser/IndentList";
-constexpr auto DirBrowserControlsKey     = u"DirectoryBrowser/Controls";
-constexpr auto DirBrowserControlsPosKey  = u"DirectoryBrowser/ControlsPosition";
-constexpr auto DirBrowserLocationKey     = u"DirectoryBrowser/LocationBar";
-constexpr auto DirBrowserShowSymLinksKey = u"DirectoryBrowser/SymLinks";
-constexpr auto DirBrowserShowHiddenKey   = u"DirectoryBrowser/Hidden";
-constexpr auto DirBrowserSendPlaybackKey = u"DirectoryBrowser/StartPlaybackOnSend";
-constexpr auto DirBrowserShowHeaderKey   = u"DirectoryBrowser/ShowHeader";
-constexpr auto DirBrowserRestoreSortKey  = u"DirectoryBrowser/RestoreSort";
+constexpr auto DirBrowserIconsKey            = u"DirectoryBrowser/Icons";
+constexpr auto DirBrowserDoubleClickKey      = u"DirectoryBrowser/DoubleClickBehaviour";
+constexpr auto DirBrowserMiddleClickKey      = u"DirectoryBrowser/MiddleClickBehaviour";
+constexpr auto DirBrowserModeKey             = u"DirectoryBrowser/Mode";
+constexpr auto DirBrowserListIndentKey       = u"DirectoryBrowser/IndentList";
+constexpr auto DirBrowserControlsKey         = u"DirectoryBrowser/Controls";
+constexpr auto DirBrowserControlsPosKey      = u"DirectoryBrowser/ControlsPosition";
+constexpr auto DirBrowserLocationKey         = u"DirectoryBrowser/LocationBar";
+constexpr auto DirBrowserShowSymLinksKey     = u"DirectoryBrowser/SymLinks";
+constexpr auto DirBrowserShowHiddenKey       = u"DirectoryBrowser/Hidden";
+constexpr auto DirBrowserSendPlaybackKey     = u"DirectoryBrowser/StartPlaybackOnSend";
+constexpr auto DirBrowserShowHeaderKey       = u"DirectoryBrowser/ShowHeader";
+constexpr auto DirBrowserRestoreSortKey      = u"DirectoryBrowser/RestoreSort";
+constexpr auto DirBrowserPlayingRowFontKey   = u"DirectoryBrowser/PlayingRowFont";
+constexpr auto DirBrowserPlayingRowColourKey = u"DirectoryBrowser/PlayingRowColour";
+constexpr auto DirBrowserBackgroundKey       = u"DirectoryBrowser/Background";
 
 namespace {
 class DirChange : public QUndoCommand
@@ -174,7 +179,8 @@ private:
 
 namespace Fooyin {
 DirBrowser::DirBrowser(const QStringList& supportedExtensions, ActionManager* actionManager,
-                       PlaylistInteractor* playlistInteractor, SettingsManager* settings, QWidget* parent)
+                       PlaylistInteractor* playlistInteractor, TrackSelectionController* selection,
+                       CoverRepository* coverRepository, SettingsManager* settings, QWidget* parent)
     : FyWidget{parent}
     , m_supportedExtensions{Utils::extensionsToWildcards(supportedExtensions)}
     , m_actionManager{actionManager}
@@ -188,6 +194,8 @@ DirBrowser::DirBrowser(const QStringList& supportedExtensions, ActionManager* ac
     , m_dirTree{new DirTree(this)}
     , m_model{new QFileSystemModel(this)}
     , m_proxyModel{new DirProxyModel(true, this)}
+    , m_backgroundSource{new BackgroundImageSource(new CoverProvider(coverRepository, this),
+                                                   m_playlistInteractor->playerController(), selection, this)}
     , m_defaultFilters{QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot}
     , m_showSymLinks{false}
     , m_showHidden{false}
@@ -340,6 +348,9 @@ DirBrowser::DirBrowser(const QStringList& supportedExtensions, ActionManager* ac
         }
     });
 
+    QObject::connect(m_backgroundSource, &BackgroundImageSource::pixmapChanged, m_dirTree,
+                     &DirTree::setBackgroundPixmap);
+
     QObject::connect(m_model, &QAbstractItemModel::layoutChanged, this, [this]() { handleModelUpdated(); });
     QObject::connect(
         m_proxyModel, &QAbstractItemModel::modelReset, this, [this]() { handleModelReset(); }, Qt::QueuedConnection);
@@ -442,10 +453,13 @@ DirBrowser::ConfigData DirBrowser::defaultConfig() const
     config.mode = static_cast<Mode>(m_settings->fileValue(DirBrowserModeKey, static_cast<int>(config.mode)).toInt());
     config.controlsPosition = static_cast<ControlsPosition>(
         m_settings->fileValue(DirBrowserControlsPosKey, static_cast<int>(config.controlsPosition)).toInt());
-    config.showControls = m_settings->fileValue(DirBrowserControlsKey, config.showControls).toBool();
-    config.showLocation = m_settings->fileValue(DirBrowserLocationKey, config.showLocation).toBool();
-    config.showSymLinks = m_settings->fileValue(DirBrowserShowSymLinksKey, config.showSymLinks).toBool();
-    config.showHidden   = m_settings->fileValue(DirBrowserShowHiddenKey, config.showHidden).toBool();
+    config.showControls     = m_settings->fileValue(DirBrowserControlsKey, config.showControls).toBool();
+    config.showLocation     = m_settings->fileValue(DirBrowserLocationKey, config.showLocation).toBool();
+    config.showSymLinks     = m_settings->fileValue(DirBrowserShowSymLinksKey, config.showSymLinks).toBool();
+    config.showHidden       = m_settings->fileValue(DirBrowserShowHiddenKey, config.showHidden).toBool();
+    config.playingRowFont   = m_settings->fileValue(DirBrowserPlayingRowFontKey, config.playingRowFont).toString();
+    config.playingRowColour = m_settings->fileValue(DirBrowserPlayingRowColourKey, config.playingRowColour).toString();
+    config.background.loadLayout(QJsonObject::fromVariantMap(m_settings->fileValue(DirBrowserBackgroundKey).toMap()));
 
     return config;
 }
@@ -470,6 +484,12 @@ void DirBrowser::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(DirBrowserLocationKey, config.showLocation);
     m_settings->fileSet(DirBrowserShowSymLinksKey, config.showSymLinks);
     m_settings->fileSet(DirBrowserShowHiddenKey, config.showHidden);
+    m_settings->fileSet(DirBrowserPlayingRowFontKey, config.playingRowFont);
+    m_settings->fileSet(DirBrowserPlayingRowColourKey, config.playingRowColour);
+
+    QJsonObject background;
+    config.background.saveLayout(background);
+    m_settings->fileSet(DirBrowserBackgroundKey, background.toVariantMap());
 }
 
 void DirBrowser::clearSavedDefaults() const
@@ -487,11 +507,15 @@ void DirBrowser::clearSavedDefaults() const
     m_settings->fileRemove(DirBrowserLocationKey);
     m_settings->fileRemove(DirBrowserShowSymLinksKey);
     m_settings->fileRemove(DirBrowserShowHiddenKey);
+    m_settings->fileRemove(DirBrowserPlayingRowFontKey);
+    m_settings->fileRemove(DirBrowserPlayingRowColourKey);
+    m_settings->fileRemove(DirBrowserBackgroundKey);
 }
 
 void DirBrowser::applyConfig(const ConfigData& config)
 {
     m_config = config;
+    m_config.background.normalise();
 
     setDoubleClickAction(m_config.doubleClickAction);
     setMiddleClickAction(m_config.middleClickAction);
@@ -507,9 +531,80 @@ void DirBrowser::applyConfig(const ConfigData& config)
     setShowSymLinksEnabled(m_config.showSymLinks);
     setShowHidden(m_config.showHidden);
     setRootPath(m_config.rootPath);
+    m_dirTree->setUniformRowHeights(m_config.playingRowFont.isEmpty());
+    m_proxyModel->setPlayingRowStyle(m_config.playingRowFont, QColor{m_config.playingRowColour});
+    m_dirTree->setBackgroundConfig(m_config.background);
+    m_backgroundSource->setConfig(m_config.background);
     updateControlState();
 
+    QMetaObject::invokeMethod(m_dirTree->itemDelegate(), "sizeHintChanged", Q_ARG(QModelIndex, {}));
+
     Q_EMIT configChanged();
+}
+
+void DirBrowser::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
+{
+    layout["DoubleClickAction"_L1] = config.doubleClickAction;
+    layout["MiddleClickAction"_L1] = config.middleClickAction;
+    layout["SendPlayback"_L1]      = config.sendPlayback;
+    layout["ShowIcons"_L1]         = config.showIcons;
+    layout["IndentList"_L1]        = config.indentList;
+    layout["ShowHeader"_L1]        = config.showHeader;
+    layout["RestoreSort"_L1]       = config.restoreSort;
+    layout["Mode"_L1]              = static_cast<int>(config.mode);
+    layout["ControlsPosition"_L1]  = static_cast<int>(config.controlsPosition);
+    layout["ShowControls"_L1]      = config.showControls;
+    layout["ShowLocation"_L1]      = config.showLocation;
+    layout["ShowSymLinks"_L1]      = config.showSymLinks;
+    layout["ShowHidden"_L1]        = config.showHidden;
+    layout["RootPath"_L1]          = config.rootPath;
+    layout["PlayingRowFont"_L1]    = config.playingRowFont;
+    layout["PlayingRowColour"_L1]  = config.playingRowColour;
+
+    QJsonObject background;
+    config.background.saveLayout(background);
+    layout["Background"_L1] = background;
+}
+
+DirBrowser::ConfigData DirBrowser::configFromLayout(const QJsonObject& layout) const
+{
+    ConfigData config{defaultConfig()};
+
+    config.doubleClickAction = layout.value("DoubleClickAction"_L1).toInt(config.doubleClickAction);
+    config.middleClickAction = layout.value("MiddleClickAction"_L1).toInt(config.middleClickAction);
+    config.sendPlayback      = layout.value("SendPlayback"_L1).toBool(config.sendPlayback);
+    config.showIcons         = layout.value("ShowIcons"_L1).toBool(config.showIcons);
+    config.indentList        = layout.value("IndentList"_L1).toBool(config.indentList);
+    config.showHeader        = layout.value("ShowHeader"_L1).toBool(config.showHeader);
+    config.restoreSort       = layout.value("RestoreSort"_L1).toBool(config.restoreSort);
+
+    if(layout.contains("Mode"_L1)) {
+        const int mode = layout.value("Mode"_L1).toInt();
+        if(mode == static_cast<int>(Mode::Tree) || mode == static_cast<int>(Mode::List)) {
+            config.mode = static_cast<Mode>(mode);
+        }
+    }
+    if(layout.contains("ControlsPosition"_L1)) {
+        const auto position = static_cast<ControlsPosition>(layout.value("ControlsPosition"_L1).toInt());
+        if(position == ControlsPosition::Top || position == ControlsPosition::Bottom) {
+            config.controlsPosition = position;
+        }
+    }
+
+    config.showControls     = layout.value("ShowControls"_L1).toBool(config.showControls);
+    config.showLocation     = layout.value("ShowLocation"_L1).toBool(config.showLocation);
+    config.showSymLinks     = layout.value("ShowSymLinks"_L1).toBool(config.showSymLinks);
+    config.showHidden       = layout.value("ShowHidden"_L1).toBool(config.showHidden);
+    config.rootPath         = layout.value("RootPath"_L1).toString(config.rootPath);
+    config.playingRowFont   = layout.value("PlayingRowFont"_L1).toString(config.playingRowFont);
+    config.playingRowColour = layout.value("PlayingRowColour"_L1).toString(config.playingRowColour);
+    config.background.loadLayout(layout.value("Background"_L1).toObject());
+
+    if(config.rootPath.isEmpty()) {
+        config.rootPath = QDir::homePath();
+    }
+
+    return config;
 }
 
 void DirBrowser::playstateChanged(Player::PlayState state)
@@ -759,42 +854,6 @@ QStringList DirBrowser::selectedFilePaths() const
     return paths;
 }
 
-void DirBrowser::addPlaylistMenu(QMenu* menu) const
-{
-    if(!menu) {
-        return;
-    }
-
-    const QStringList selectedPaths = selectedFilePaths();
-    if(selectedPaths.empty()) {
-        return;
-    }
-
-    const auto playlists = m_playlistHandler->playlists();
-    if(playlists.empty()) {
-        return;
-    }
-
-    auto* playlistMenu = new QMenu(tr("Add to playlist"), menu);
-    for(const auto* playlist : playlists) {
-        if(!playlist || playlist->isAutoPlaylist() || playlist->isTemporary()) {
-            continue;
-        }
-
-        auto* action = playlistMenu->addAction(playlist->name());
-        QObject::connect(action, &QAction::triggered, this, [this, playlistId = playlist->id(), selectedPaths]() {
-            const QList<QUrl> files = filesFromPaths(selectedPaths);
-            if(files.empty()) {
-                return;
-            }
-
-            m_playlistInteractor->filesToPlaylist(files, playlistId);
-        });
-    }
-
-    menu->addMenu(playlistMenu);
-}
-
 void DirBrowser::handleAction(TrackAction action, bool onlySelection)
 {
     QModelIndexList selected = m_dirTree->selectionModel()->selectedRows();
@@ -943,6 +1002,42 @@ void DirBrowser::handlePlayAction(const QList<QUrl>& files, const QString& start
     }
 
     startPlayback(tracks, playIndex);
+}
+
+void DirBrowser::addPlaylistMenu(QMenu* menu) const
+{
+    if(!menu) {
+        return;
+    }
+
+    const QStringList selectedPaths = selectedFilePaths();
+    if(selectedPaths.empty()) {
+        return;
+    }
+
+    const auto playlists = m_playlistHandler->playlists();
+    if(playlists.empty()) {
+        return;
+    }
+
+    auto* playlistMenu = new QMenu(tr("Add to playlist"), menu);
+    for(const auto* playlist : playlists) {
+        if(!playlist || playlist->isAutoPlaylist() || playlist->isTemporary()) {
+            continue;
+        }
+
+        auto* action = playlistMenu->addAction(playlist->name());
+        QObject::connect(action, &QAction::triggered, this, [this, playlistId = playlist->id(), selectedPaths]() {
+            const QList<QUrl> files = filesFromPaths(selectedPaths);
+            if(files.empty()) {
+                return;
+            }
+
+            m_playlistInteractor->filesToPlaylist(files, playlistId);
+        });
+    }
+
+    menu->addMenu(playlistMenu);
 }
 
 void DirBrowser::handleDoubleClick(const QModelIndex& index)
@@ -1208,62 +1303,6 @@ void DirBrowser::goUp()
 QString DirBrowser::tempPlaylistName() const
 {
     return u"␟DirBrowserPlaylist.%1␟"_s.arg(id().name());
-}
-
-void DirBrowser::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
-{
-    layout["DoubleClickAction"_L1] = config.doubleClickAction;
-    layout["MiddleClickAction"_L1] = config.middleClickAction;
-    layout["SendPlayback"_L1]      = config.sendPlayback;
-    layout["ShowIcons"_L1]         = config.showIcons;
-    layout["IndentList"_L1]        = config.indentList;
-    layout["ShowHeader"_L1]        = config.showHeader;
-    layout["RestoreSort"_L1]       = config.restoreSort;
-    layout["Mode"_L1]              = static_cast<int>(config.mode);
-    layout["ControlsPosition"_L1]  = static_cast<int>(config.controlsPosition);
-    layout["ShowControls"_L1]      = config.showControls;
-    layout["ShowLocation"_L1]      = config.showLocation;
-    layout["ShowSymLinks"_L1]      = config.showSymLinks;
-    layout["ShowHidden"_L1]        = config.showHidden;
-    layout["RootPath"_L1]          = config.rootPath;
-}
-
-DirBrowser::ConfigData DirBrowser::configFromLayout(const QJsonObject& layout) const
-{
-    ConfigData config{defaultConfig()};
-
-    config.doubleClickAction = layout.value("DoubleClickAction"_L1).toInt(config.doubleClickAction);
-    config.middleClickAction = layout.value("MiddleClickAction"_L1).toInt(config.middleClickAction);
-    config.sendPlayback      = layout.value("SendPlayback"_L1).toBool(config.sendPlayback);
-    config.showIcons         = layout.value("ShowIcons"_L1).toBool(config.showIcons);
-    config.indentList        = layout.value("IndentList"_L1).toBool(config.indentList);
-    config.showHeader        = layout.value("ShowHeader"_L1).toBool(config.showHeader);
-    config.restoreSort       = layout.value("RestoreSort"_L1).toBool(config.restoreSort);
-
-    if(layout.contains("Mode"_L1)) {
-        const int mode = layout.value("Mode"_L1).toInt();
-        if(mode == static_cast<int>(Mode::Tree) || mode == static_cast<int>(Mode::List)) {
-            config.mode = static_cast<Mode>(mode);
-        }
-    }
-    if(layout.contains("ControlsPosition"_L1)) {
-        const auto position = static_cast<ControlsPosition>(layout.value("ControlsPosition"_L1).toInt());
-        if(position == ControlsPosition::Top || position == ControlsPosition::Bottom) {
-            config.controlsPosition = position;
-        }
-    }
-
-    config.showControls = layout.value("ShowControls"_L1).toBool(config.showControls);
-    config.showLocation = layout.value("ShowLocation"_L1).toBool(config.showLocation);
-    config.showSymLinks = layout.value("ShowSymLinks"_L1).toBool(config.showSymLinks);
-    config.showHidden   = layout.value("ShowHidden"_L1).toBool(config.showHidden);
-    config.rootPath     = layout.value("RootPath"_L1).toString(config.rootPath);
-
-    if(config.rootPath.isEmpty()) {
-        config.rootPath = QDir::homePath();
-    }
-
-    return config;
 }
 
 } // namespace Fooyin

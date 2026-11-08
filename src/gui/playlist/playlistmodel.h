@@ -27,6 +27,7 @@
 #include <core/player/playerdefs.h>
 #include <core/playlist/playlist.h>
 #include <core/scripting/scriptcontextservice.h>
+#include <gui/guisettings.h>
 #include <utils/treemodel.h>
 
 #include <QColor>
@@ -34,8 +35,8 @@
 #include <QPixmap>
 #include <QThread>
 
-#include <array>
 #include <expected>
+#include <optional>
 #include <unordered_map>
 
 namespace Fooyin {
@@ -341,12 +342,7 @@ private:
     std::vector<int> m_pixmapColumns;
     int m_pixmapPadding;
     int m_pixmapPaddingTop;
-    int m_starRatingSize;
-    int m_loveHeartSize;
-    std::array<QColor, 5> m_ratingStarColours;
-    QColor m_unratedStarColour;
-    QColor m_loveHeartColour;
-    QColor m_unlovedHeartColour;
+    TrackEditorAppearance m_editorAppearance;
 
     ScriptSubscription* m_scriptSubscription;
     std::vector<ScriptDependencies> m_columnDependencies;

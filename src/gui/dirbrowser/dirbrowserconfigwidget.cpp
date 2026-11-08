@@ -19,14 +19,20 @@
 
 #include "dirbrowserconfigwidget.h"
 
+#include <gui/guiutils.h>
 #include <gui/trackselectioncontroller.h>
+#include <gui/widgets/backgroundconfigwidget.h>
+#include <gui/widgets/colourbutton.h>
+#include <gui/widgets/fontbutton.h>
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QEvent>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QRadioButton>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -48,12 +54,16 @@ DirBrowserConfigDialog::DirBrowserConfigDialog(DirBrowser* browser, QWidget* par
     , m_doubleClick{new QComboBox(this)}
     , m_middleClick{new QComboBox(this)}
     , m_playbackOnSend{new QCheckBox(tr("Start playback immediately"), this)}
+    , m_playingRowFont{new FontButton(tr("Font") + u":"_s, true, this)}
+    , m_playingRowColour{new ColourButton(tr("Background colour") + u":"_s, true, this)}
+    , m_background{new BackgroundConfigWidget(this)}
 {
     m_playbackOnSend->setToolTip(
         tr("For ‘Replace current playlist’ and ‘Create new playlist’, start playback immediately."));
     m_restoreSort->setToolTip(tr("Restore the sort column on startup and when changing directories."));
 
-    auto* clickBehaviour       = new QGroupBox(tr("Click Behaviour"), this);
+    auto* generalPage          = new QWidget(this);
+    auto* clickBehaviour       = new QGroupBox(tr("Click Behaviour"), generalPage);
     auto* clickBehaviourLayout = new QGridLayout(clickBehaviour);
 
     clickBehaviourLayout->addWidget(new QLabel(tr("Double-click") + u":"_s, this), 0, 0);
@@ -63,13 +73,13 @@ DirBrowserConfigDialog::DirBrowserConfigDialog(DirBrowser* browser, QWidget* par
     clickBehaviourLayout->addWidget(m_playbackOnSend, 2, 0, 1, 2);
     clickBehaviourLayout->setColumnStretch(2, 1);
 
-    auto* browserMode       = new QGroupBox(tr("Browser Mode"), this);
+    auto* browserMode       = new QGroupBox(tr("Browser Mode"), generalPage);
     auto* browserModeLayout = new QVBoxLayout(browserMode);
     browserModeLayout->addWidget(m_treeMode);
     browserModeLayout->addWidget(m_listMode);
     browserModeLayout->addStretch();
 
-    auto* browserFilters       = new QGroupBox(tr("Browser Filters"), this);
+    auto* browserFilters       = new QGroupBox(tr("Browser Filters"), generalPage);
     auto* browserFiltersLayout = new QVBoxLayout(browserFilters);
     browserFiltersLayout->addWidget(m_showSymLinks);
     browserFiltersLayout->addWidget(m_showHidden);
@@ -77,8 +87,9 @@ DirBrowserConfigDialog::DirBrowserConfigDialog(DirBrowser* browser, QWidget* par
     m_controlsPosition->addItem(tr("Top"), static_cast<int>(DirBrowser::ControlsPosition::Top));
     m_controlsPosition->addItem(tr("Bottom"), static_cast<int>(DirBrowser::ControlsPosition::Bottom));
 
-    auto* displayOptions       = new QGroupBox(tr("Display Options"), this);
+    auto* displayOptions       = new QGroupBox(tr("Display Options"), generalPage);
     auto* displayOptionsLayout = new QGridLayout(displayOptions);
+
     displayOptionsLayout->addWidget(m_showIcons, 0, 0, 1, 2);
     displayOptionsLayout->addWidget(m_indentList, 0, 2, 1, 2);
     displayOptionsLayout->addWidget(m_showHeader, 1, 0, 1, 2);
@@ -90,14 +101,34 @@ DirBrowserConfigDialog::DirBrowserConfigDialog(DirBrowser* browser, QWidget* par
     displayOptionsLayout->setColumnStretch(1, 1);
     displayOptionsLayout->setColumnStretch(3, 1);
 
-    auto* mainLayout = contentLayout();
+    const int playingRowLabelWidth = std::max(m_playingRowColour->labelWidthHint(), m_playingRowFont->labelWidthHint());
+    m_playingRowColour->setLabelWidth(playingRowLabelWidth);
+    m_playingRowFont->setLabelWidth(playingRowLabelWidth);
+    m_playingRowColour->setToolTip(
+        tr("Use a custom background colour for the currently playing row; transparency is supported"));
+    m_playingRowFont->setToolTip(tr("Use a custom font for the currently playing row"));
+
+    auto* playingRowGroup  = new QGroupBox(tr("Playing Row"), generalPage);
+    auto* playingRowLayout = new QGridLayout(playingRowGroup);
+
+    playingRowLayout->addWidget(m_playingRowColour, 0, 0);
+    playingRowLayout->addWidget(m_playingRowFont, 1, 0);
+
+    auto* mainLayout = new QGridLayout(generalPage);
+
     mainLayout->addWidget(clickBehaviour, 0, 0, 1, 2);
     mainLayout->addWidget(browserMode, 1, 0);
     mainLayout->addWidget(browserFilters, 1, 1);
     mainLayout->addWidget(displayOptions, 2, 0, 1, 2);
+    mainLayout->addWidget(playingRowGroup, 3, 0, 1, 2);
     mainLayout->setColumnStretch(0, 1);
     mainLayout->setColumnStretch(1, 1);
-    mainLayout->setRowStretch(3, 1);
+    mainLayout->setRowStretch(4, 1);
+
+    auto* tabs = new QTabWidget(this);
+    tabs->addTab(generalPage, tr("General"));
+    tabs->addTab(m_background, tr("Background"));
+    contentLayout()->addWidget(tabs);
 
     TrackSelectionController::addAction(m_doubleClick, tr("Expand/collapse"), TrackAction::None);
     TrackSelectionController::addAction(m_doubleClick, tr("Expand/collapse or play now"), TrackAction::Play);
@@ -112,6 +143,15 @@ DirBrowserConfigDialog::DirBrowserConfigDialog(DirBrowser* browser, QWidget* par
     QObject::connect(browser, &DirBrowser::configChanged, this, &DirBrowserConfigDialog::syncCurrentConfig);
 
     loadCurrentConfig();
+}
+
+void DirBrowserConfigDialog::changeEvent(QEvent* event)
+{
+    WidgetConfigDialog::changeEvent(event);
+
+    if(event->type() == QEvent::PaletteChange && !m_playingRowColour->isChecked()) {
+        m_playingRowColour->setColour(Gui::defaultPlayingRowColour());
+    }
 }
 
 DirBrowser::ConfigData DirBrowserConfigDialog::config() const
@@ -131,6 +171,10 @@ DirBrowser::ConfigData DirBrowserConfigDialog::config() const
         .showSymLinks      = m_showSymLinks->isChecked(),
         .showHidden        = m_showHidden->isChecked(),
         .rootPath          = widget()->currentConfig().rootPath,
+        .playingRowFont    = m_playingRowFont->isChecked() ? m_playingRowFont->buttonFont().toString() : QString{},
+        .playingRowColour
+        = m_playingRowColour->isChecked() ? m_playingRowColour->colour().name(QColor::HexArgb) : QString{},
+        .background = m_background->config(),
     };
 }
 
@@ -146,6 +190,18 @@ void DirBrowserConfigDialog::setConfig(const DirBrowser::ConfigData& config)
     m_showSymLinks->setChecked(config.showSymLinks);
     m_showHidden->setChecked(config.showHidden);
     m_playbackOnSend->setChecked(config.sendPlayback);
+
+    m_playingRowFont->setChecked(!config.playingRowFont.isEmpty());
+    if(config.playingRowFont.isEmpty()) {
+        m_playingRowFont->setButtonFont(widget()->font());
+    }
+    else {
+        m_playingRowFont->setButtonFont(config.playingRowFont);
+    }
+    const QColor playingRowColour{config.playingRowColour};
+    m_playingRowColour->setChecked(playingRowColour.isValid());
+    m_playingRowColour->setColour(playingRowColour.isValid() ? playingRowColour : Gui::defaultPlayingRowColour());
+    m_background->setConfig(config.background);
 
     if(config.mode == DirBrowser::Mode::List) {
         m_listMode->setChecked(true);
@@ -167,6 +223,7 @@ void DirBrowserConfigDialog::mergeExternalConfig(const DirBrowser::ConfigData& p
         &DirBrowser::ConfigData::showHeader, &DirBrowser::ConfigData::restoreSort, &DirBrowser::ConfigData::mode,
         &DirBrowser::ConfigData::controlsPosition, &DirBrowser::ConfigData::showControls,
         &DirBrowser::ConfigData::showLocation, &DirBrowser::ConfigData::showSymLinks,
-        &DirBrowser::ConfigData::showHidden, &DirBrowser::ConfigData::rootPath);
+        &DirBrowser::ConfigData::showHidden, &DirBrowser::ConfigData::rootPath, &DirBrowser::ConfigData::playingRowFont,
+        &DirBrowser::ConfigData::playingRowColour, &DirBrowser::ConfigData::background);
 }
 } // namespace Fooyin

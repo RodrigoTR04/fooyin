@@ -42,12 +42,12 @@ class CoverProvider;
 class CoverRepository;
 class BackgroundImageSource;
 class WidgetBackground;
-class ExpandedTreeView;
 class TrackSelectionController;
 class WidgetContext;
 
 namespace Filters {
 class ExpansionTrackModel;
+class ExpansionTrackView;
 class ExpansionFooterWidget;
 
 class FilterExpansionWidget : public QWidget
@@ -63,6 +63,8 @@ public:
 
     void setContent(const ExpansionResult& content, bool preserveSelection = true);
     void updateContent(const ExpansionResult& content);
+
+    void startPlayback(const QModelIndex& index);
 
     void setPreviewMode();
     void setPreviewArtwork(const QPixmap& artwork, bool show);
@@ -83,6 +85,7 @@ public:
 
     void clear();
 
+    [[nodiscard]] const TrackList& tracks() const;
     [[nodiscard]] QColor defaultBackgroundColour() const;
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] bool hasHeightForWidth() const override;
@@ -98,6 +101,7 @@ Q_SIGNALS:
     void requestContextMenu(const QPoint& pos, Fooyin::WidgetContext* context, bool hasSelection);
     void doubleClicked(const QModelIndex& index);
     void middleClicked(const QModelIndex& index);
+    void trackStatsChanged(const Fooyin::TrackList& tracks, Fooyin::Track::Stat stat);
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
@@ -116,7 +120,6 @@ private:
 
     bool updateTracks(const ExpansionResult& content, bool rebuild, bool preserveSelection = true);
     void updateSelection();
-    void activate(const QModelIndex& index);
     void updateArtwork();
     void updateLayout();
     void scheduleLayoutUpdate();
@@ -138,7 +141,7 @@ private:
     uint64_t m_runningGeneration;
     bool m_workerBusy;
     ExpansionTrackModel* m_model;
-    ExpandedTreeView* m_tracks;
+    ExpansionTrackView* m_tracks;
     ExpansionFooterWidget* m_footer;
     QToolButton* m_close;
     Track m_coverTrack;
@@ -162,6 +165,9 @@ private:
     QMargins m_artworkMargins;
     QMargins m_effectiveArtworkMargins;
     QPixmap m_artwork;
+    QPixmap m_scaledArtwork;
+    QSize m_scaledArtworkSize;
+    qint64 m_scaledArtworkKey;
     QRect m_artworkRect;
     uint64_t m_coverRequest;
 };
