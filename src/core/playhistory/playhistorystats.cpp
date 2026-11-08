@@ -133,6 +133,15 @@ qint64 countedAfterMs(const PlayHistoryEntry& entry)
     return std::min<qint64>(static_cast<qint64>(entry.duration) / 2, 4 * 60 * 1000);
 }
 
+//! How much of a track was left to play when it was counted. That's from the position it had got to, which isn't how
+//! long it was listened to if some was skipped. Without the position the whole track is assumed to have been listened
+//! to.
+qint64 remainingMs(const PlayHistoryEntry& entry)
+{
+    const qint64 position = entry.countedAt >= 0 ? entry.countedAt : countedAfterMs(entry);
+    return std::max<qint64>(0, static_cast<qint64>(entry.duration) - position);
+}
+
 int bitrateBucket(int kbps)
 {
     if(kbps < 128) {
@@ -191,8 +200,7 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
 
     qint64 sessionStart{0};
     qint64 sessionEnd{0};
-    qint64 sessionLastDuration{0};
-    qint64 sessionLastCounted{0};
+    qint64 sessionLastRemaining{0};
     int sessionListens{0};
     const auto finishSession = [&stats, &sessionStart, &sessionEnd, &sessionListens]() {
         if(sessionListens < 2) {
@@ -258,18 +266,15 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         // than the usual gap for long tracks, which would otherwise each be a session of their own. As only the time a
         // listen was counted is known, not when listening stopped, a break after a track that was skipped part way
         // through can be taken for part of the session, but never by more than the time the track would have taken
-        const auto duration     = static_cast<qint64>(entry.duration);
-        const qint64 counted    = countedAfterMs(entry);
-        const qint64 playGap    = sessionLastDuration - sessionLastCounted + counted;
-        const qint64 allowedGap = PlayHistoryStats::SessionGapMs + std::max<qint64>(0, playGap);
+        const qint64 playGap    = sessionLastRemaining + countedAfterMs(entry);
+        const qint64 allowedGap = PlayHistoryStats::SessionGapMs + playGap;
         if(sessionListens == 0 || entry.timestamp - sessionEnd > allowedGap) {
             finishSession();
             sessionStart   = entry.timestamp;
             sessionListens = 0;
         }
-        sessionEnd          = entry.timestamp;
-        sessionLastDuration = duration;
-        sessionLastCounted  = counted;
+        sessionEnd           = entry.timestamp;
+        sessionLastRemaining = remainingMs(entry);
         ++sessionListens;
 
         auto trackIt = tracks.find(entry.hash);

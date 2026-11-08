@@ -30,12 +30,12 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 
 #include <memory>
 #include <vector>
 
 namespace Fooyin {
-class PlayHistoryDatabase;
 
 /*!
  * A single recorded listen.
@@ -64,6 +64,9 @@ struct FYCORE_EXPORT PlayHistoryEntry
     //! How long, in milliseconds, the track had been listened to when the listen was counted, which depends on the
     //! playback settings. -1 when unknown.
     qint64 countedAfter{-1};
+    //! The position in the track, in milliseconds, when the listen was counted. This differs from countedAfter when
+    //! part of the track was skipped. -1 when unknown.
+    qint64 countedAt{-1};
 
     //! Identifies the album this entry belongs to, or an empty string when it has no album.
     [[nodiscard]] QString albumKey() const;
@@ -71,7 +74,8 @@ struct FYCORE_EXPORT PlayHistoryEntry
     //! Builds the key identifying an album from its title and album artists.
     [[nodiscard]] static QString albumKey(const QString& album, const QStringList& albumArtists);
 
-    static PlayHistoryEntry fromTrack(const Track& track, qint64 timestamp, qint64 countedAfter = -1);
+    static PlayHistoryEntry fromTrack(const Track& track, qint64 timestamp, qint64 countedAfter = -1,
+                                      qint64 countedAt = -1);
 };
 
 /*!
@@ -124,9 +128,16 @@ public:
     explicit PlayHistory(DbConnectionPoolPtr dbPool, QObject* parent = nullptr);
     ~PlayHistory() override;
 
-    //! Records a listen of @p track at the current time, which was counted once it had been listened to for
-    //! @p countedAfter milliseconds (if known).
-    void recordPlay(const Track& track, qint64 countedAfter = -1);
+    /*!
+     * Records a listen of @p track at the current time, which was counted once it had been listened to for
+     * @p countedAfter milliseconds and had got to @p countedAt milliseconds in (if known).
+     *
+     * The listen is stored in the background, retrying if the database is busy, as it can be while the library is
+     * being scanned. playRecorded() is emitted once it has been stored.
+     */
+    void recordPlay(const Track& track, qint64 countedAfter = -1, qint64 countedAt = -1);
+    //! Waits for listens being recorded to be stored. This is done when the history is deleted so none are lost.
+    void waitForWrites();
 
     //! Loads the listens in [@p from, @p to) (milliseconds since the epoch) without blocking the caller.
     [[nodiscard]] QFuture<PlayHistoryData> load(qint64 from, qint64 to) const;
@@ -137,6 +148,7 @@ Q_SIGNALS:
 
 private:
     DbConnectionPoolPtr m_dbPool;
-    std::unique_ptr<PlayHistoryDatabase> m_database;
+    //! Listens are written one at a time, off the thread of the interface.
+    QThreadPool m_writePool;
 };
 } // namespace Fooyin

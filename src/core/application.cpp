@@ -176,9 +176,10 @@ Application::Application(QObject* parent)
     QObject::connect(m_playerController, &PlayerController::trackPlayed, m_library,
                      &UnifiedMusicLibrary::trackWasPlayed);
     QObject::connect(m_playerController, &PlayerController::trackPlayed, m_playHistory, [this](const Track& track) {
-        // Listens are counted after a configurable time, which the history needs to know to tell when tracks were
-        // played one after the other
-        m_playHistory->recordPlay(track, static_cast<qint64>(m_playerController->playedThreshold()));
+        // Listens are counted after a configurable time, and not necessarily at the same point in the track if it has
+        // been skipped through. The history needs both to tell when tracks were played one after the other
+        m_playHistory->recordPlay(track, static_cast<qint64>(m_playerController->currentTimeListened()),
+                                  static_cast<qint64>(m_playerController->currentPosition()));
     });
     QObject::connect(m_playerController, &PlayerController::currentTrackChanged, m_library,
                      &UnifiedMusicLibrary::setActivePlaybackTrack);

@@ -457,4 +457,12 @@
             ALTER TABLE PlayHistory ADD COLUMN CountedAfter INTEGER DEFAULT -1;
         </sql>
     </revision>
+    <revision version="25">
+        <description>
+            Add the position a listen was counted at to the play history.
+        </description>
+        <sql>
+            ALTER TABLE PlayHistory ADD COLUMN CountedAt INTEGER DEFAULT -1;
+        </sql>
+    </revision>
 </schema>

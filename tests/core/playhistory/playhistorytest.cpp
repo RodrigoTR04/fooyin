@@ -29,9 +29,13 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QSignalSpy>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <gtest/gtest.h>
 
@@ -39,7 +43,7 @@
 
 using namespace Qt::StringLiterals;
 
-constexpr auto CurrentSchemaVersion = 24;
+constexpr auto CurrentSchemaVersion = 25;
 
 namespace Fooyin::Testing {
 namespace {
@@ -103,7 +107,8 @@ protected:
         ensureCoreApplication();
         ASSERT_TRUE(m_dir.isValid());
 
-        m_pool = createDbPool(m_dir.filePath(u"fooyin.db"_s));
+        m_dbPath = m_dir.filePath(u"fooyin.db"_s);
+        m_pool   = createDbPool(m_dbPath);
         m_handler.emplace(m_pool);
     }
 
@@ -120,6 +125,7 @@ protected:
     }
 
     QTemporaryDir m_dir;
+    QString m_dbPath;
     DbConnectionPoolPtr m_pool;
     std::optional<DbConnectionHandler> m_handler;
 };
@@ -143,7 +149,9 @@ TEST_F(PlayHistoryTest, RecordsTheMetadataOfAPlayedTrack)
     track.generateHash();
 
     const qint64 before = QDateTime::currentMSecsSinceEpoch();
-    history.recordPlay(track, 123'456);
+    history.recordPlay(track, 123'456, 130'000);
+    history.waitForWrites();
+    QCoreApplication::processEvents();
     const qint64 after = QDateTime::currentMSecsSinceEpoch();
 
     EXPECT_EQ(recorded.count(), 1);
@@ -166,6 +174,7 @@ TEST_F(PlayHistoryTest, RecordsTheMetadataOfAPlayedTrack)
     EXPECT_EQ(entry.bitrate, 900);
     EXPECT_EQ(entry.lossless, 1);
     EXPECT_EQ(entry.countedAfter, 123'456);
+    EXPECT_EQ(entry.countedAt, 130'000);
 }
 
 TEST_F(PlayHistoryTest, ListensRecordedWithoutATimeToBeCountedHaveNone)
@@ -176,10 +185,50 @@ TEST_F(PlayHistoryTest, ListensRecordedWithoutATimeToBeCountedHaveNone)
     track.setTitle(u"Song"_s);
     track.generateHash();
     history.recordPlay(track);
+    history.waitForWrites();
 
     const auto data = history.load(0, QDateTime::currentMSecsSinceEpoch() + 1000).result();
     ASSERT_EQ(data.entries.size(), 1U);
     EXPECT_EQ(data.entries.front().countedAfter, -1);
+    EXPECT_EQ(data.entries.front().countedAt, -1);
+}
+
+TEST_F(PlayHistoryTest, RecordingAListenDoesNotWaitForABusyDatabaseAndIsNotLostToIt)
+{
+    PlayHistory history{m_pool};
+    QSignalSpy recorded{&history, &PlayHistory::playRecorded};
+
+    // Something else is partway through writing, as a library scan can be, so the database is locked
+    const auto connectionName = u"playhistory-lock-holder"_s;
+    {
+        auto holder = QSqlDatabase::addDatabase(u"QSQLITE"_s, connectionName);
+        holder.setDatabaseName(m_dbPath);
+        ASSERT_TRUE(holder.open());
+        ASSERT_TRUE(holder.transaction());
+        QSqlQuery lock{holder};
+        ASSERT_TRUE(lock.exec(u"INSERT INTO Libraries (Name, Path) VALUES ('Busy', '/busy');"_s));
+
+        Track track{u"/music/song.mp3"_s};
+        track.setTitle(u"Song"_s);
+        track.generateHash();
+
+        QElapsedTimer timer;
+        timer.start();
+        history.recordPlay(track);
+        // The caller carries on straight away rather than waiting for the lock
+        EXPECT_LT(timer.elapsed(), 200);
+
+        QThread::msleep(400);
+        ASSERT_TRUE(holder.commit());
+        holder.close();
+    }
+    QSqlDatabase::removeDatabase(connectionName);
+
+    // Once the lock was let go the listen was stored
+    history.waitForWrites();
+    QCoreApplication::processEvents();
+    EXPECT_EQ(recorded.count(), 1);
+    EXPECT_EQ(history.load(0, QDateTime::currentMSecsSinceEpoch() + 1000).result().entries.size(), 1U);
 }
 
 TEST_F(PlayHistoryTest, WorksOutWhetherTheCodecIsLossless)
@@ -196,6 +245,7 @@ TEST_F(PlayHistoryTest, WorksOutWhetherTheCodecIsLossless)
     record(u"a.flac"_s, u"FLAC"_s);
     record(u"b.mp3"_s, u"MP3"_s);
     record(u"c.xyz"_s, {});
+    history.waitForWrites();
 
     auto data = history.load(0, QDateTime::currentMSecsSinceEpoch() + 1000).result();
     ASSERT_EQ(data.entries.size(), 3U);
@@ -325,6 +375,41 @@ TEST_F(PlayHistoryTest, ChangingGenresKeepsListensWithTheTrackAndUpdatesTheirGen
     ASSERT_EQ(data.entries.size(), 1U);
     EXPECT_EQ(data.entries.front().hash, hash);
     EXPECT_EQ(data.entries.front().genres, (QStringList{u"Jazz"_s, u"Blues"_s}));
+}
+
+TEST_F(PlayHistoryTest, UpdatingATrackLeavesHowEachListenSoundedAlone)
+{
+    const auto db = database();
+    TrackDatabase trackDb;
+    trackDb.initialise(DbConnectionProvider{m_pool});
+
+    // A track that was listened to as a FLAC, and which has a lossy copy with the same tags
+    Track track{u"/music/song.mp3"_s};
+    track.setTitle(u"Song"_s);
+    track.setCodec(u"MP3"_s);
+    track.setBitrate(128);
+    track.setDuration(180'000);
+    track.generateHash();
+
+    TrackList tracks{track};
+    ASSERT_TRUE(trackDb.storeTracks(tracks));
+
+    auto flacListen     = makeEntry(tracks.front().hash(), at(2025, 3, 1));
+    flacListen.bitrate  = 900;
+    flacListen.lossless = 1;
+    flacListen.duration = 200'000;
+    ASSERT_TRUE(db.insert(flacListen));
+
+    // Updating the copy refreshes the tags, but a listen of the other copy didn't sound like this one
+    tracks.front().setGenres({u"Jazz"_s});
+    ASSERT_TRUE(trackDb.updateTrack(tracks.front()));
+
+    const auto data = db.load(0, at(2026, 1, 1));
+    ASSERT_EQ(data.entries.size(), 1U);
+    EXPECT_EQ(data.entries.front().genres, QStringList{u"Jazz"_s});
+    EXPECT_EQ(data.entries.front().bitrate, 900);
+    EXPECT_EQ(data.entries.front().lossless, 1);
+    EXPECT_EQ(data.entries.front().duration, 200'000U);
 }
 
 TEST_F(PlayHistoryTest, KeepsTheAlbumOfListensUpToDateWhenOnlyTheAlbumArtistChanges)

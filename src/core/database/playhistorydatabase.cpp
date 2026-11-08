@@ -43,9 +43,9 @@ bool PlayHistoryDatabase::insert(const PlayHistoryEntry& entry) const
 {
     static const QString statement
         = u"INSERT INTO PlayHistory (Timestamp, Hash, Title, Artists, Album, AlbumArtists, Genres, Composers, "
-          "Year, Duration, Bitrate, Lossless, CountedAfter) "
+          "Year, Duration, Bitrate, Lossless, CountedAfter, CountedAt) "
           "VALUES (:timestamp, :hash, :title, :artists, :album, :albumArtists, :genres, :composers, "
-          ":year, :duration, :bitrate, :lossless, :countedAfter);"_s;
+          ":year, :duration, :bitrate, :lossless, :countedAfter, :countedAt);"_s;
 
     DbQuery query{db(), statement};
     query.bindValue(u":timestamp"_s, entry.timestamp);
@@ -61,6 +61,7 @@ bool PlayHistoryDatabase::insert(const PlayHistoryEntry& entry) const
     query.bindValue(u":bitrate"_s, entry.bitrate);
     query.bindValue(u":lossless"_s, entry.lossless);
     query.bindValue(u":countedAfter"_s, entry.countedAfter);
+    query.bindValue(u":countedAt"_s, entry.countedAt);
 
     return query.exec();
 }
@@ -89,14 +90,14 @@ void PlayHistoryDatabase::refreshMetadata(const PlayHistoryEntry& entry) const
         return;
     }
 
-    // Only the rows that differ, as this is done for every track that is updated
+    // Only what comes from the tags, which identify the track. How a listen sounded, such as its bitrate, is a matter
+    // of the copy of the track that was played, and the same tags can be on more than one. Only the rows that differ
+    // are written, as this is done for every track that is updated
     static const QString statement
         = u"UPDATE PlayHistory SET Title = :title, Artists = :artists, Album = :album, AlbumArtists = :albumArtists, "
-          "Genres = :genres, Composers = :composers, Year = :year, Duration = :duration, Bitrate = :bitrate, "
-          "Lossless = :lossless WHERE Hash = :hash AND (Title IS NOT :title OR Artists IS NOT :artists OR "
-          "Album IS NOT :album OR AlbumArtists IS NOT :albumArtists OR Genres IS NOT :genres OR "
-          "Composers IS NOT :composers OR Year IS NOT :year OR Duration IS NOT :duration OR "
-          "Bitrate IS NOT :bitrate OR Lossless IS NOT :lossless);"_s;
+          "Genres = :genres, Composers = :composers, Year = :year WHERE Hash = :hash AND (Title IS NOT :title OR "
+          "Artists IS NOT :artists OR Album IS NOT :album OR AlbumArtists IS NOT :albumArtists OR "
+          "Genres IS NOT :genres OR Composers IS NOT :composers OR Year IS NOT :year);"_s;
 
     DbQuery query{db(), statement};
     query.bindValue(u":hash"_s, entry.hash);
@@ -107,9 +108,6 @@ void PlayHistoryDatabase::refreshMetadata(const PlayHistoryEntry& entry) const
     query.bindValue(u":genres"_s, joinList(entry.genres));
     query.bindValue(u":composers"_s, joinList(entry.composers));
     query.bindValue(u":year"_s, entry.year);
-    query.bindValue(u":duration"_s, static_cast<qint64>(entry.duration));
-    query.bindValue(u":bitrate"_s, entry.bitrate);
-    query.bindValue(u":lossless"_s, entry.lossless);
     query.exec();
 }
 
@@ -120,7 +118,7 @@ PlayHistoryData PlayHistoryDatabase::load(qint64 from, qint64 to) const
     {
         static const QString statement
             = u"SELECT Timestamp, Hash, Title, Artists, Album, AlbumArtists, Genres, Composers, "
-              "Year, Duration, Bitrate, Lossless, CountedAfter FROM PlayHistory "
+              "Year, Duration, Bitrate, Lossless, CountedAfter, CountedAt FROM PlayHistory "
               "WHERE Timestamp >= :from AND Timestamp < :to ORDER BY Timestamp, EntryID;"_s;
 
         DbQuery query{db(), statement};
@@ -146,6 +144,7 @@ PlayHistoryData PlayHistoryDatabase::load(qint64 from, qint64 to) const
             entry.bitrate      = query.value(10).toInt();
             entry.lossless     = query.value(11).toInt();
             entry.countedAfter = query.value(12).isNull() ? -1 : query.value(12).toLongLong();
+            entry.countedAt    = query.value(13).isNull() ? -1 : query.value(13).toLongLong();
             data.entries.emplace_back(std::move(entry));
         }
     }

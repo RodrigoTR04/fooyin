@@ -252,6 +252,29 @@ TEST(PlayHistoryStatsTest, UsesTheTimeListensWereCountedAfterWhenItIsKnown)
     EXPECT_FALSE(computePlayHistoryStats(makeData({first, second}), Saturday, Saturday).longestSession.has_value());
 }
 
+TEST(PlayHistoryStatsTest, SkippingThroughATrackLeavesLessOfItToPlay)
+{
+    // A 40 minute track listened to for the four minutes it takes to count, but those were the last four, the rest
+    // having been skipped. When the next listen is counted 30 minutes later it can't have been playing straight on
+    auto first          = makeEntry(u"a"_s, at(Saturday, 10, 0));
+    first.duration      = 40 * 60 * 1000;
+    first.countedAfter  = 4 * 60 * 1000;
+    first.countedAt     = 40 * 60 * 1000;
+    auto second         = makeEntry(u"b"_s, at(Saturday, 10, 30));
+    second.duration     = 3 * 60 * 1000;
+    second.countedAfter = 90 * 1000;
+    second.countedAt    = 90 * 1000;
+
+    EXPECT_FALSE(computePlayHistoryStats(makeData({first, second}), Saturday, Saturday).longestSession.has_value());
+
+    // If it wasn't known where in the track it was counted, it would be taken to have been listened to from the start,
+    // and there would seem to be plenty of it left to play
+    first.countedAt  = -1;
+    const auto stats = computePlayHistoryStats(makeData({first, second}), Saturday, Saturday);
+    ASSERT_TRUE(stats.longestSession.has_value());
+    EXPECT_EQ(stats.longestSession->listens, 2);
+}
+
 TEST(PlayHistoryStatsTest, AGapLongerThanTheTrackStillEndsASession)
 {
     // The same tracks, but an hour apart, which is a break whatever their length
