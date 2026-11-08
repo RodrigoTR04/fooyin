@@ -122,6 +122,12 @@ PlayHistoryStatsCategory rankCategory(const QHash<QString, int>& counts, int top
     return category;
 }
 
+//! How far into a track a listen is counted with the default settings: halfway, but no more than four minutes.
+qint64 countedOffsetMs(qint64 duration)
+{
+    return std::min<qint64>(duration / 2, 4 * 60 * 1000);
+}
+
 int bitrateBucket(int kbps)
 {
     if(kbps < 128) {
@@ -241,10 +247,14 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         }
         previous = &entry;
 
-        // A listen is counted part way through a track, so tracks played one after the other are counted about a track
-        // length apart. Long tracks therefore need more leeway than the usual gap, or they'd each be a session
-        const auto duration     = static_cast<qint64>(entry.duration);
-        const qint64 allowedGap = PlayHistoryStats::SessionGapMs + std::max(duration, sessionLastDuration);
+        // A listen is counted part way through a track, so when tracks are played one after the other the time between
+        // them is the rest of the one before plus the part of the next it takes to be counted. That is a good deal more
+        // than the usual gap for long tracks, which would otherwise each be a session of their own. As only the time a
+        // listen was counted is known, not when listening stopped, a break after a track that was skipped part way
+        // through can be taken for part of the session, but never by more than the time the track would have taken
+        const auto duration  = static_cast<qint64>(entry.duration);
+        const qint64 playGap = sessionLastDuration - countedOffsetMs(sessionLastDuration) + countedOffsetMs(duration);
+        const qint64 allowedGap = PlayHistoryStats::SessionGapMs + std::max<qint64>(0, playGap);
         if(sessionListens == 0 || entry.timestamp - sessionEnd > allowedGap) {
             finishSession();
             sessionStart   = entry.timestamp;
@@ -321,6 +331,13 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
     finishDay();
 
     stats.uniqueTracks = static_cast<int>(tracks.size());
+    if(!options.libraryTracks.isEmpty()) {
+        for(auto it = tracks.cbegin(); it != tracks.cend(); ++it) {
+            if(options.libraryTracks.contains(it.key())) {
+                ++stats.libraryTracksHeard;
+            }
+        }
+    }
 
     for(int i{0}; i < PlayHistoryStats::CategoryCount; ++i) {
         stats.categories[static_cast<size_t>(i)]
@@ -499,11 +516,16 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         stats.decades.push_back({.key = QString::number(decade), .count = listens});
     }
 
+    // An album is complete when every track it has now was listened to. Which tracks it has matters, not just how
+    // many, as tracks may have been removed or added since some were listened to
     for(auto it = albumHeard.cbegin(); it != albumHeard.cend(); ++it) {
-        const int total = options.albumTrackCounts.value(it.key(), 0);
-        if(total >= 2 && it.value().first.size() >= total) {
+        const QSet<QString> albumTracks = options.albumTracks.value(it.key());
+        const auto& heard               = it.value().first;
+        if(albumTracks.size() >= 2
+           && std::ranges::all_of(albumTracks, [&heard](const QString& hash) { return heard.contains(hash); })) {
             const QString name = it.key().section(QLatin1Char{'\037'}, 0, 0);
-            stats.completedAlbums.push_back({.name = name, .tracks = total, .listens = it.value().second});
+            stats.completedAlbums.push_back(
+                {.name = name, .tracks = static_cast<int>(albumTracks.size()), .listens = it.value().second});
         }
     }
     std::ranges::sort(stats.completedAlbums, [](const auto& lhs, const auto& rhs) {

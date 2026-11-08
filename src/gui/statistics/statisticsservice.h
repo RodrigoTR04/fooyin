@@ -26,6 +26,7 @@
 #include <QFuture>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 
 namespace Fooyin {
 class CoverRepository;
@@ -37,11 +38,13 @@ namespace Stats {
 struct LibraryInfo
 {
     int trackCount{0};
-    //! Tracks that have never been played, according to their play count.
-    int neverPlayed{0};
     qint64 durationMs{0};
-    //! Number of tracks in each album, keyed by PlayHistoryEntry::albumKey().
-    QHash<QString, int> albumTrackCounts;
+    //! Every track in the library, by hash.
+    QSet<QString> tracks;
+    //! The tracks that have a play count of zero, by hash. Some of these may be in the history all the same.
+    QSet<QString> unplayed;
+    //! The tracks of each album, keyed by PlayHistoryEntry::albumKey().
+    QHash<QString, QSet<QString>> albumTracks;
 };
 } // namespace Stats
 

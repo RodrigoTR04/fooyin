@@ -27,6 +27,7 @@
 #include <QFuture>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -96,6 +97,8 @@ struct FYCORE_EXPORT PlayHistorySummary
     qint64 newestTimestamp{0};
     //! Calendar years (local time) containing at least one listen, ascending.
     std::vector<int> years;
+    //! Every track (by hash) that has been listened to at least once.
+    QSet<QString> hashes;
 
     [[nodiscard]] bool isEmpty() const
     {

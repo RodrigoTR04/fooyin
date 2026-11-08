@@ -25,6 +25,7 @@
 
 #include <QDate>
 #include <QHash>
+#include <QSet>
 #include <QString>
 
 #include <array>
@@ -128,6 +129,9 @@ struct FYCORE_EXPORT PlayHistoryStats
     int totalListens{0};
     int daysWithListens{0};
     int uniqueTracks{0};
+    //! How many of those tracks are in the library now, when it's given in the options. Tracks listened to and then
+    //! removed don't count.
+    int libraryTracksHeard{0};
     int uniqueArtists{0};
     int uniqueGenres{0};
     int uniqueAlbums{0};
@@ -208,8 +212,11 @@ struct FYCORE_EXPORT PlayHistoryStatsOptions
     int topCount{PlayHistoryStats::MaxTop};
     //! Whether to work out the most listened track of each month.
     bool monthlyTop{false};
-    //! Number of tracks in each album (keyed by PlayHistoryEntry::albumKey()), used to find completed albums.
-    QHash<QString, int> albumTrackCounts;
+    //! The tracks (by hash) that each album in the library has, keyed by PlayHistoryEntry::albumKey(). Used to find
+    //! completed albums, which need every one of these listened to.
+    QHash<QString, QSet<QString>> albumTracks;
+    //! The tracks (by hash) in the library, used to count how many of them were listened to.
+    QSet<QString> libraryTracks;
 };
 
 /*!

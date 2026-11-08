@@ -267,10 +267,16 @@ void YearInReviewDialog::loadSummary()
 
 void YearInReviewDialog::reloadSummary()
 {
-    // Stay on the same year and page, unless there was nothing to show yet
-    m_pendingYear = m_year;
-    m_restorePage = m_stack->currentIndex();
-    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+    // The library may have changed too, and what's shown about it has to agree with the listens
+    m_service->refreshLibraryInfo();
+
+    m_service->summary().then(this, [this](const PlayHistorySummary& summary) {
+        // Stay on the year and page being shown when the new listens arrive, not when they were asked for, as it may
+        // have been changed since
+        m_pendingYear = m_year;
+        m_restorePage = m_stack->currentIndex();
+        applySummary(summary);
+    });
 }
 
 void YearInReviewDialog::applySummary(const PlayHistorySummary& summary)

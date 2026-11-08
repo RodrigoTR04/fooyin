@@ -59,12 +59,13 @@ void StatisticsService::refreshLibraryInfo()
 
         ++info.trackCount;
         info.durationMs += static_cast<qint64>(track.duration());
+        info.tracks.insert(hash);
         if(track.playCount() == 0) {
-            ++info.neverPlayed;
+            info.unplayed.insert(hash);
         }
 
         if(const QString key = PlayHistoryEntry::albumKey(track.album(), track.albumArtists()); !key.isEmpty()) {
-            ++info.albumTrackCounts[key];
+            info.albumTracks[key].insert(hash);
         }
     }
 
@@ -93,8 +94,9 @@ QFuture<PlayHistoryStats> StatisticsService::compute(const QDate& firstDay, cons
     const qint64 to   = lastDay.addDays(1).startOfDay().toMSecsSinceEpoch();
 
     PlayHistoryStatsOptions options;
-    options.monthlyTop       = monthlyTop;
-    options.albumTrackCounts = m_libraryInfo.albumTrackCounts;
+    options.monthlyTop    = monthlyTop;
+    options.albumTracks   = m_libraryInfo.albumTracks;
+    options.libraryTracks = m_libraryInfo.tracks;
 
     return m_history->load(from, to).then(QtFuture::Launch::Async,
                                           [firstDay, lastDay, options](const PlayHistoryData& data) {

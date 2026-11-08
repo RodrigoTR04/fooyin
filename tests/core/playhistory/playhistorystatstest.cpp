@@ -217,6 +217,18 @@ TEST(PlayHistoryStatsTest, LongTracksPlayedBackToBackStayInOneSession)
     EXPECT_EQ(stats.longestSession->listens, 3);
 }
 
+TEST(PlayHistoryStatsTest, ALongTrackAfterAShortOneOnlyAllowsForTheTimeItTakesToCount)
+{
+    // After a three minute track, a long one is counted about five minutes later if listening carried on. Forty
+    // minutes is well beyond that, however long the track, so this is a break
+    auto first      = makeEntry(u"a"_s, at(Saturday, 10, 0));
+    first.duration  = 3 * 60 * 1000;
+    auto second     = makeEntry(u"b"_s, at(Saturday, 10, 40));
+    second.duration = 60 * 60 * 1000;
+
+    EXPECT_FALSE(computePlayHistoryStats(makeData({first, second}), Saturday, Saturday).longestSession.has_value());
+}
+
 TEST(PlayHistoryStatsTest, AGapLongerThanTheTrackStillEndsASession)
 {
     // The same tracks, but an hour apart, which is a break whatever their length
@@ -471,9 +483,9 @@ TEST(PlayHistoryStatsTest, FindsAlbumsWithEveryTrackListenedTo)
                                 albumEntry(u"c1"_s, u"Single"_s, 4)});
 
     PlayHistoryStatsOptions options;
-    options.albumTrackCounts.insert(PlayHistoryEntry::albumKey(u"Whole"_s, {u"Band"_s}), 2);
-    options.albumTrackCounts.insert(PlayHistoryEntry::albumKey(u"Partial"_s, {u"Band"_s}), 3);
-    options.albumTrackCounts.insert(PlayHistoryEntry::albumKey(u"Single"_s, {u"Band"_s}), 1);
+    options.albumTracks.insert(PlayHistoryEntry::albumKey(u"Whole"_s, {u"Band"_s}), {u"a1"_s, u"a2"_s});
+    options.albumTracks.insert(PlayHistoryEntry::albumKey(u"Partial"_s, {u"Band"_s}), {u"b1"_s, u"b2"_s, u"b3"_s});
+    options.albumTracks.insert(PlayHistoryEntry::albumKey(u"Single"_s, {u"Band"_s}), {u"c1"_s});
 
     const auto stats = computePlayHistoryStats(data, Saturday, Saturday, options);
 
@@ -482,6 +494,49 @@ TEST(PlayHistoryStatsTest, FindsAlbumsWithEveryTrackListenedTo)
     EXPECT_EQ(stats.completedAlbums.front().name, u"Whole"_s);
     EXPECT_EQ(stats.completedAlbums.front().tracks, 2);
     EXPECT_EQ(stats.completedAlbums.front().listens, 3);
+}
+
+TEST(PlayHistoryStatsTest, AnAlbumIsOnlyCompleteWhenItsCurrentTracksWereAllListenedTo)
+{
+    const auto albumEntry = [](const QString& hash, int minute) {
+        auto entry         = makeEntry(hash, at(Saturday, 10, minute));
+        entry.album        = u"Album"_s;
+        entry.albumArtists = {u"Band"_s};
+        return entry;
+    };
+
+    // Tracks A and B were listened to. B has since been removed and an unplayed C added, so the album still has
+    // two tracks, but they aren't the two that were listened to
+    const auto data = makeData({albumEntry(u"A"_s, 0), albumEntry(u"B"_s, 1)});
+
+    PlayHistoryStatsOptions options;
+    options.albumTracks.insert(PlayHistoryEntry::albumKey(u"Album"_s, {u"Band"_s}), {u"A"_s, u"C"_s});
+
+    EXPECT_TRUE(computePlayHistoryStats(data, Saturday, Saturday, options).completedAlbums.empty());
+
+    options.albumTracks[PlayHistoryEntry::albumKey(u"Album"_s, {u"Band"_s})] = {u"A"_s, u"B"_s};
+    EXPECT_EQ(computePlayHistoryStats(data, Saturday, Saturday, options).completedAlbums.size(), 1U);
+}
+
+TEST(PlayHistoryStatsTest, CountsOnlyListenedToTracksStillInTheLibrary)
+{
+    const auto data = makeData({makeEntry(u"kept"_s, at(Saturday, 10)), makeEntry(u"removed"_s, at(Saturday, 11)),
+                                makeEntry(u"kept"_s, at(Saturday, 12))});
+
+    PlayHistoryStatsOptions options;
+    options.libraryTracks = {u"kept"_s, u"never"_s};
+
+    const auto stats = computePlayHistoryStats(data, Saturday, Saturday, options);
+
+    EXPECT_EQ(stats.uniqueTracks, 2);
+    EXPECT_EQ(stats.libraryTracksHeard, 1);
+}
+
+TEST(PlayHistoryStatsTest, LibraryTracksHeardIsNotWorkedOutWithoutALibrary)
+{
+    const auto stats = computePlayHistoryStats(makeData({makeEntry(u"a"_s, at(Saturday, 10))}), Saturday, Saturday);
+
+    EXPECT_EQ(stats.libraryTracksHeard, 0);
 }
 
 TEST(PlayHistoryStatsTest, FindsTheTopTrackOfEachMonthWhenAsked)

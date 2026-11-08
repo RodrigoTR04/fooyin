@@ -254,6 +254,7 @@ TEST_F(PlayHistoryTest, SummarisesTheWholeHistory)
     EXPECT_EQ(summary.newestTimestamp, at(2025, 12, 31, 20));
     // Years with nothing in them are left out
     EXPECT_EQ(summary.years, (std::vector<int>{2023, 2025}));
+    EXPECT_EQ(summary.hashes, (QSet<QString>{u"a"_s, u"b"_s, u"c"_s}));
 }
 
 TEST_F(PlayHistoryTest, FollowsATrackWhenRetaggingChangesItsHash)

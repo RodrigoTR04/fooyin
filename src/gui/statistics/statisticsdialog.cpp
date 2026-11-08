@@ -355,6 +355,8 @@ void StatisticsDialog::loadSummary()
 
 void StatisticsDialog::reloadSummary()
 {
+    // The library may have changed too, and what's shown about it has to agree with the listens
+    m_service->refreshLibraryInfo();
     m_keepScroll = true;
     m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
 }
@@ -649,9 +651,17 @@ QWidget* StatisticsDialog::makeHabits(const PlayHistoryStats& stats)
     tiles.push_back(new MiniTile(tr("Played %1+ times").arg(PlayHistoryStats::HeavyRotationListens),
                                  tr("%1 tracks").arg(number(stats.heavyRotationTracks))));
     if(library.trackCount > 0) {
-        const int reach = static_cast<int>(std::lround(stats.uniqueTracks * 100.0 / library.trackCount));
+        // Tracks that were listened to and then removed from the library aren't part of the reach
+        const int reach = static_cast<int>(std::lround(stats.libraryTracksHeard * 100.0 / library.trackCount));
         tiles.push_back(new MiniTile(tr("Library reach"), u"%1%"_s.arg(reach)));
-        tiles.push_back(new MiniTile(tr("Never played"), tr("%1 tracks").arg(number(library.neverPlayed))));
+        // Not played according to its play count, nor listened to since the history began
+        qint64 neverPlayed{0};
+        for(const QString& hash : library.unplayed) {
+            if(!m_summary.hashes.contains(hash)) {
+                ++neverPlayed;
+            }
+        }
+        tiles.push_back(new MiniTile(tr("Never played"), tr("%1 tracks").arg(number(neverPlayed))));
     }
     if(stats.avgFirstMinute >= 0) {
         tiles.push_back(new MiniTile(tr("First listen"), formatMinuteOfDay(stats.avgFirstMinute)));

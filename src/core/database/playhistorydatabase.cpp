@@ -168,6 +168,15 @@ PlayHistorySummary PlayHistoryDatabase::summary() const
         return summary;
     }
 
+    {
+        DbQuery query{db(), u"SELECT DISTINCT Hash FROM PlayHistory;"_s};
+        if(query.exec()) {
+            while(query.next()) {
+                summary.hashes.insert(query.value(0).toString());
+            }
+        }
+    }
+
     static const QString statement
         = u"SELECT DISTINCT CAST(strftime('%Y', Timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER) AS Year "
           "FROM PlayHistory ORDER BY Year;"_s;
