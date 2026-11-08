@@ -122,10 +122,15 @@ PlayHistoryStatsCategory rankCategory(const QHash<QString, int>& counts, int top
     return category;
 }
 
-//! How far into a track a listen is counted with the default settings: halfway, but no more than four minutes.
-qint64 countedOffsetMs(qint64 duration)
+//! How long a track had been listened to when it was counted, as recorded with the listen. Listens that don't have it,
+//! such as those from before it was recorded, are taken to have been counted as they are with the default settings:
+//! halfway through the track, but no more than four minutes in.
+qint64 countedAfterMs(const PlayHistoryEntry& entry)
 {
-    return std::min<qint64>(duration / 2, 4 * 60 * 1000);
+    if(entry.countedAfter >= 0) {
+        return entry.countedAfter;
+    }
+    return std::min<qint64>(static_cast<qint64>(entry.duration) / 2, 4 * 60 * 1000);
 }
 
 int bitrateBucket(int kbps)
@@ -187,6 +192,7 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
     qint64 sessionStart{0};
     qint64 sessionEnd{0};
     qint64 sessionLastDuration{0};
+    qint64 sessionLastCounted{0};
     int sessionListens{0};
     const auto finishSession = [&stats, &sessionStart, &sessionEnd, &sessionListens]() {
         if(sessionListens < 2) {
@@ -252,8 +258,9 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         // than the usual gap for long tracks, which would otherwise each be a session of their own. As only the time a
         // listen was counted is known, not when listening stopped, a break after a track that was skipped part way
         // through can be taken for part of the session, but never by more than the time the track would have taken
-        const auto duration  = static_cast<qint64>(entry.duration);
-        const qint64 playGap = sessionLastDuration - countedOffsetMs(sessionLastDuration) + countedOffsetMs(duration);
+        const auto duration     = static_cast<qint64>(entry.duration);
+        const qint64 counted    = countedAfterMs(entry);
+        const qint64 playGap    = sessionLastDuration - sessionLastCounted + counted;
         const qint64 allowedGap = PlayHistoryStats::SessionGapMs + std::max<qint64>(0, playGap);
         if(sessionListens == 0 || entry.timestamp - sessionEnd > allowedGap) {
             finishSession();
@@ -262,6 +269,7 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         }
         sessionEnd          = entry.timestamp;
         sessionLastDuration = duration;
+        sessionLastCounted  = counted;
         ++sessionListens;
 
         auto trackIt = tracks.find(entry.hash);

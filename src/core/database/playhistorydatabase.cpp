@@ -43,9 +43,9 @@ bool PlayHistoryDatabase::insert(const PlayHistoryEntry& entry) const
 {
     static const QString statement
         = u"INSERT INTO PlayHistory (Timestamp, Hash, Title, Artists, Album, AlbumArtists, Genres, Composers, "
-          "Year, Duration, Bitrate, Lossless) "
+          "Year, Duration, Bitrate, Lossless, CountedAfter) "
           "VALUES (:timestamp, :hash, :title, :artists, :album, :albumArtists, :genres, :composers, "
-          ":year, :duration, :bitrate, :lossless);"_s;
+          ":year, :duration, :bitrate, :lossless, :countedAfter);"_s;
 
     DbQuery query{db(), statement};
     query.bindValue(u":timestamp"_s, entry.timestamp);
@@ -60,8 +60,57 @@ bool PlayHistoryDatabase::insert(const PlayHistoryEntry& entry) const
     query.bindValue(u":duration"_s, static_cast<qint64>(entry.duration));
     query.bindValue(u":bitrate"_s, entry.bitrate);
     query.bindValue(u":lossless"_s, entry.lossless);
+    query.bindValue(u":countedAfter"_s, entry.countedAfter);
 
     return query.exec();
+}
+
+void PlayHistoryDatabase::moveTrack(const QString& from, const QString& to) const
+{
+    if(from.isEmpty() || to.isEmpty() || from == to) {
+        return;
+    }
+
+    // Tracks are identified by hash, which changes with the tags that make it up. Unless another track is still known
+    // by the old hash, its listens belong to the track as it is now
+    static const QString statement = u"UPDATE PlayHistory SET Hash = :to WHERE Hash = :from AND NOT "
+                                     "EXISTS (SELECT 1 FROM Tracks WHERE TrackHash = :remaining);"_s;
+
+    DbQuery query{db(), statement};
+    query.bindValue(u":to"_s, to);
+    query.bindValue(u":from"_s, from);
+    query.bindValue(u":remaining"_s, from);
+    query.exec();
+}
+
+void PlayHistoryDatabase::refreshMetadata(const PlayHistoryEntry& entry) const
+{
+    if(entry.hash.isEmpty()) {
+        return;
+    }
+
+    // Only the rows that differ, as this is done for every track that is updated
+    static const QString statement
+        = u"UPDATE PlayHistory SET Title = :title, Artists = :artists, Album = :album, AlbumArtists = :albumArtists, "
+          "Genres = :genres, Composers = :composers, Year = :year, Duration = :duration, Bitrate = :bitrate, "
+          "Lossless = :lossless WHERE Hash = :hash AND (Title IS NOT :title OR Artists IS NOT :artists OR "
+          "Album IS NOT :album OR AlbumArtists IS NOT :albumArtists OR Genres IS NOT :genres OR "
+          "Composers IS NOT :composers OR Year IS NOT :year OR Duration IS NOT :duration OR "
+          "Bitrate IS NOT :bitrate OR Lossless IS NOT :lossless);"_s;
+
+    DbQuery query{db(), statement};
+    query.bindValue(u":hash"_s, entry.hash);
+    query.bindValue(u":title"_s, entry.title);
+    query.bindValue(u":artists"_s, joinList(entry.artists));
+    query.bindValue(u":album"_s, entry.album);
+    query.bindValue(u":albumArtists"_s, joinList(entry.albumArtists));
+    query.bindValue(u":genres"_s, joinList(entry.genres));
+    query.bindValue(u":composers"_s, joinList(entry.composers));
+    query.bindValue(u":year"_s, entry.year);
+    query.bindValue(u":duration"_s, static_cast<qint64>(entry.duration));
+    query.bindValue(u":bitrate"_s, entry.bitrate);
+    query.bindValue(u":lossless"_s, entry.lossless);
+    query.exec();
 }
 
 PlayHistoryData PlayHistoryDatabase::load(qint64 from, qint64 to) const
@@ -71,7 +120,7 @@ PlayHistoryData PlayHistoryDatabase::load(qint64 from, qint64 to) const
     {
         static const QString statement
             = u"SELECT Timestamp, Hash, Title, Artists, Album, AlbumArtists, Genres, Composers, "
-              "Year, Duration, Bitrate, Lossless FROM PlayHistory "
+              "Year, Duration, Bitrate, Lossless, CountedAfter FROM PlayHistory "
               "WHERE Timestamp >= :from AND Timestamp < :to ORDER BY Timestamp, EntryID;"_s;
 
         DbQuery query{db(), statement};
@@ -96,6 +145,7 @@ PlayHistoryData PlayHistoryDatabase::load(qint64 from, qint64 to) const
             entry.duration     = query.value(9).toULongLong();
             entry.bitrate      = query.value(10).toInt();
             entry.lossless     = query.value(11).toInt();
+            entry.countedAfter = query.value(12).isNull() ? -1 : query.value(12).toLongLong();
             data.entries.emplace_back(std::move(entry));
         }
     }

@@ -61,6 +61,9 @@ struct FYCORE_EXPORT PlayHistoryEntry
     int bitrate{0};
     //! 1 for lossless codecs, 0 for lossy codecs, -1 when unknown.
     int lossless{-1};
+    //! How long, in milliseconds, the track had been listened to when the listen was counted, which depends on the
+    //! playback settings. -1 when unknown.
+    qint64 countedAfter{-1};
 
     //! Identifies the album this entry belongs to, or an empty string when it has no album.
     [[nodiscard]] QString albumKey() const;
@@ -68,7 +71,7 @@ struct FYCORE_EXPORT PlayHistoryEntry
     //! Builds the key identifying an album from its title and album artists.
     [[nodiscard]] static QString albumKey(const QString& album, const QStringList& albumArtists);
 
-    static PlayHistoryEntry fromTrack(const Track& track, qint64 timestamp);
+    static PlayHistoryEntry fromTrack(const Track& track, qint64 timestamp, qint64 countedAfter = -1);
 };
 
 /*!
@@ -121,8 +124,9 @@ public:
     explicit PlayHistory(DbConnectionPoolPtr dbPool, QObject* parent = nullptr);
     ~PlayHistory() override;
 
-    //! Records a listen of @p track at the current time.
-    void recordPlay(const Track& track);
+    //! Records a listen of @p track at the current time, which was counted once it had been listened to for
+    //! @p countedAfter milliseconds (if known).
+    void recordPlay(const Track& track, qint64 countedAfter = -1);
 
     //! Loads the listens in [@p from, @p to) (milliseconds since the epoch) without blocking the caller.
     [[nodiscard]] QFuture<PlayHistoryData> load(qint64 from, qint64 to) const;

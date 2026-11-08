@@ -449,4 +449,12 @@
             CREATE INDEX IF NOT EXISTS PlayHistoryHashIndex ON PlayHistory(Hash);
         </sql>
     </revision>
+    <revision version="24">
+        <description>
+            Add how long a listen had been going when it was counted to the play history.
+        </description>
+        <sql>
+            ALTER TABLE PlayHistory ADD COLUMN CountedAfter INTEGER DEFAULT -1;
+        </sql>
+    </revision>
 </schema>

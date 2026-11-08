@@ -229,6 +229,29 @@ TEST(PlayHistoryStatsTest, ALongTrackAfterAShortOneOnlyAllowsForTheTimeItTakesTo
     EXPECT_FALSE(computePlayHistoryStats(makeData({first, second}), Saturday, Saturday).longestSession.has_value());
 }
 
+TEST(PlayHistoryStatsTest, UsesTheTimeListensWereCountedAfterWhenItIsKnown)
+{
+    // A short track followed by a long one, with the playback settings set so listens are counted at the end of a
+    // track. The second is counted 40 minutes after the first, as it would be playing straight on. With the default
+    // settings that would be a break, but it isn't for the settings they were recorded with
+    auto first          = makeEntry(u"a"_s, at(Saturday, 10, 0));
+    first.duration      = 3 * 60 * 1000;
+    first.countedAfter  = 3 * 60 * 1000;
+    auto second         = makeEntry(u"b"_s, at(Saturday, 10, 40));
+    second.duration     = 40 * 60 * 1000;
+    second.countedAfter = 40 * 60 * 1000;
+
+    const auto stats = computePlayHistoryStats(makeData({first, second}), Saturday, Saturday);
+
+    ASSERT_TRUE(stats.longestSession.has_value());
+    EXPECT_EQ(stats.longestSession->listens, 2);
+
+    // Without that, the default is assumed
+    first.countedAfter  = -1;
+    second.countedAfter = -1;
+    EXPECT_FALSE(computePlayHistoryStats(makeData({first, second}), Saturday, Saturday).longestSession.has_value());
+}
+
 TEST(PlayHistoryStatsTest, AGapLongerThanTheTrackStillEndsASession)
 {
     // The same tracks, but an hour apart, which is a break whatever their length

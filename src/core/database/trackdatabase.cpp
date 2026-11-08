@@ -19,6 +19,8 @@
 
 #include "trackdatabase.h"
 
+#include "playhistorydatabase.h"
+
 #include "databasehelpers.h"
 
 #include <core/constants.h>
@@ -454,7 +456,7 @@ bool TrackDatabase::updateTrack(const Track& track)
         return false;
     }
 
-    migratePlayHistory(previousHash, track.hash());
+    syncPlayHistory(previousHash, track);
     return true;
 }
 
@@ -471,22 +473,19 @@ QString TrackDatabase::storedHash(int id) const
     return {};
 }
 
-void TrackDatabase::migratePlayHistory(const QString& previousHash, const QString& newHash) const
+void TrackDatabase::syncPlayHistory(const QString& previousHash, const Track& track) const
 {
-    if(previousHash.isEmpty() || newHash.isEmpty() || previousHash == newHash) {
+    if(track.hash().isEmpty()) {
         return;
     }
 
-    // Tracks are identified in the history by hash, which changes with the tags that make it up. Unless another
-    // track is still known by the old hash, its listens belong to the track as it is now
-    static const QString statement = u"UPDATE PlayHistory SET Hash = :newHash WHERE Hash = :previousHash AND NOT "
-                                     "EXISTS (SELECT 1 FROM Tracks WHERE TrackHash = :remainingHash);"_s;
+    PlayHistoryDatabase history;
+    history.initialise(dbProvider());
 
-    DbQuery query{db(), statement};
-    query.bindValue(u":newHash"_s, newHash);
-    query.bindValue(u":previousHash"_s, previousHash);
-    query.bindValue(u":remainingHash"_s, previousHash);
-    query.exec();
+    history.moveTrack(previousHash, track.hash());
+    // The hash doesn't cover everything the history keeps, such as the album artist, so this is needed whether the
+    // hash changed or not
+    history.refreshMetadata(PlayHistoryEntry::fromTrack(track, 0));
 }
 
 bool TrackDatabase::updateTrackStats(const Track& track)

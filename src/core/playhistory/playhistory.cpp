@@ -68,10 +68,11 @@ QString PlayHistoryEntry::albumKey(const QString& album, const QStringList& albu
     return album + QLatin1String{Constants::UnitSeparator} + albumArtists.join(QLatin1String{Constants::UnitSeparator});
 }
 
-PlayHistoryEntry PlayHistoryEntry::fromTrack(const Track& track, qint64 timestamp)
+PlayHistoryEntry PlayHistoryEntry::fromTrack(const Track& track, qint64 timestamp, qint64 countedAfter)
 {
     PlayHistoryEntry entry;
     entry.timestamp    = timestamp;
+    entry.countedAfter = countedAfter;
     entry.hash         = track.hash().isEmpty() ? track.uniqueFilepath() : track.hash();
     entry.title        = track.title();
     entry.artists      = track.artists();
@@ -96,9 +97,9 @@ PlayHistory::PlayHistory(DbConnectionPoolPtr dbPool, QObject* parent)
 
 PlayHistory::~PlayHistory() = default;
 
-void PlayHistory::recordPlay(const Track& track)
+void PlayHistory::recordPlay(const Track& track, qint64 countedAfter)
 {
-    if(m_database->insert(PlayHistoryEntry::fromTrack(track, QDateTime::currentMSecsSinceEpoch()))) {
+    if(m_database->insert(PlayHistoryEntry::fromTrack(track, QDateTime::currentMSecsSinceEpoch(), countedAfter))) {
         Q_EMIT playRecorded();
     }
 }

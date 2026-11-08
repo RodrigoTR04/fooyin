@@ -39,7 +39,7 @@
 
 using namespace Qt::StringLiterals;
 
-constexpr auto CurrentSchemaVersion = 23;
+constexpr auto CurrentSchemaVersion = 24;
 
 namespace Fooyin::Testing {
 namespace {
@@ -143,7 +143,7 @@ TEST_F(PlayHistoryTest, RecordsTheMetadataOfAPlayedTrack)
     track.generateHash();
 
     const qint64 before = QDateTime::currentMSecsSinceEpoch();
-    history.recordPlay(track);
+    history.recordPlay(track, 123'456);
     const qint64 after = QDateTime::currentMSecsSinceEpoch();
 
     EXPECT_EQ(recorded.count(), 1);
@@ -165,6 +165,21 @@ TEST_F(PlayHistoryTest, RecordsTheMetadataOfAPlayedTrack)
     EXPECT_EQ(entry.duration, 215'000U);
     EXPECT_EQ(entry.bitrate, 900);
     EXPECT_EQ(entry.lossless, 1);
+    EXPECT_EQ(entry.countedAfter, 123'456);
+}
+
+TEST_F(PlayHistoryTest, ListensRecordedWithoutATimeToBeCountedHaveNone)
+{
+    PlayHistory history{m_pool};
+
+    Track track{u"/music/song.mp3"_s};
+    track.setTitle(u"Song"_s);
+    track.generateHash();
+    history.recordPlay(track);
+
+    const auto data = history.load(0, QDateTime::currentMSecsSinceEpoch() + 1000).result();
+    ASSERT_EQ(data.entries.size(), 1U);
+    EXPECT_EQ(data.entries.front().countedAfter, -1);
 }
 
 TEST_F(PlayHistoryTest, WorksOutWhetherTheCodecIsLossless)
@@ -282,6 +297,36 @@ TEST_F(PlayHistoryTest, FollowsATrackWhenRetaggingChangesItsHash)
     ASSERT_EQ(data.entries.size(), 2U);
     EXPECT_EQ(data.entries[0].hash, tracks.front().hash());
     EXPECT_EQ(data.entries[1].hash, tracks.front().hash());
+    EXPECT_EQ(data.entries[0].title, u"New title"_s);
+}
+
+TEST_F(PlayHistoryTest, KeepsTheAlbumOfListensUpToDateWhenOnlyTheAlbumArtistChanges)
+{
+    const auto db = database();
+    TrackDatabase trackDb;
+    trackDb.initialise(DbConnectionProvider{m_pool});
+
+    // The album artist isn't part of a track's hash, so correcting it leaves the hash as it was
+    Track track{u"/music/song.flac"_s};
+    track.setTitle(u"Song"_s);
+    track.setAlbum(u"Album"_s);
+    track.setAlbumArtists({u"Old Artist"_s});
+    track.generateHash();
+    const QString hash = track.hash();
+
+    TrackList tracks{track};
+    ASSERT_TRUE(trackDb.storeTracks(tracks));
+    ASSERT_TRUE(db.insert(PlayHistoryEntry::fromTrack(tracks.front(), at(2025, 3, 1))));
+
+    tracks.front().setAlbumArtists({u"New Artist"_s});
+    ASSERT_EQ(tracks.front().hash(), hash);
+    ASSERT_TRUE(trackDb.updateTrack(tracks.front()));
+
+    // So the listen belongs to the same album as the track does now
+    const auto data = db.load(0, at(2026, 1, 1));
+    ASSERT_EQ(data.entries.size(), 1U);
+    EXPECT_EQ(data.entries.front().albumArtists, QStringList{u"New Artist"_s});
+    EXPECT_EQ(data.entries.front().albumKey(), PlayHistoryEntry::albumKey(u"Album"_s, {u"New Artist"_s}));
 }
 
 TEST_F(PlayHistoryTest, LeavesHistoryAloneWhileAnotherTrackStillHasTheOldHash)

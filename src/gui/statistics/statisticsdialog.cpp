@@ -524,28 +524,41 @@ QWidget* StatisticsDialog::makeMonths(const PlayHistoryStats& stats)
         points.push_back({locale.monthName(month + 1, QLocale::ShortFormat), stats.months[static_cast<size_t>(month)]});
     }
 
-    auto* card
-        = new StatsCard(tr("Months"), stats.totalDays() > 366 ? tr("All time") : QString::number(stats.lastDay.year()));
+    // Each bar adds up a calendar month over every year in the period. When the period doesn't repeat any month a bar
+    // is a single month and can be selected, but otherwise it can't be said which year the reader means
+    const int monthsSpanned
+        = (stats.lastDay.year() - stats.firstDay.year()) * 12 + stats.lastDay.month() - stats.firstDay.month() + 1;
+    const bool selectable = monthsSpanned <= 12;
+
+    QString subtitle = tr("All years combined");
+    if(selectable) {
+        subtitle = stats.firstDay.year() == stats.lastDay.year()
+                     ? QString::number(stats.lastDay.year())
+                     : u"%1 – %2"_s.arg(stats.firstDay.year()).arg(stats.lastDay.year());
+    }
+
+    auto* card  = new StatsCard(tr("Months"), subtitle);
     auto* chart = new VerticalBarsChart(card);
     chart->setPlotHeight(150);
-    chart->setClickable(true);
+    chart->setClickable(selectable);
     chart->setData(std::move(points));
     card->addWidget(chart);
 
-    // Selecting a month narrows the statistics down to it
-    QObject::connect(chart, &VerticalBarsChart::barClicked, this,
-                     [this, lastDay = stats.lastDay, firstDay = stats.firstDay](int month) {
-                         int year = lastDay.year();
-                         if(month + 1 > lastDay.month()) {
-                             --year;
-                         }
-                         const QDate start{year, month + 1, 1};
-                         const QDate end = start.addMonths(1).addDays(-1);
-                         if(end < firstDay) {
-                             return;
-                         }
-                         setCustomRange(start, std::min(end, QDate::currentDate()));
-                     });
+    if(selectable) {
+        // Selecting a month narrows the statistics down to it, within the period being looked at
+        QObject::connect(chart, &VerticalBarsChart::barClicked, this,
+                         [this, firstDay = stats.firstDay, lastDay = stats.lastDay](int month) {
+                             const int year = month + 1 >= firstDay.month() ? firstDay.year() : firstDay.year() + 1;
+                             const QDate start{year, month + 1, 1};
+                             const QDate end = start.addMonths(1).addDays(-1);
+
+                             const QDate from = std::max(start, firstDay);
+                             const QDate to   = std::min(end, lastDay);
+                             if(from <= to) {
+                                 setCustomRange(from, to);
+                             }
+                         });
+    }
 
     return card;
 }

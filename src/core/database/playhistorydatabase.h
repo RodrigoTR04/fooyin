@@ -30,6 +30,11 @@ class FYCORE_EXPORT PlayHistoryDatabase : public DbModule
 public:
     bool insert(const PlayHistoryEntry& entry) const;
 
+    //! Moves the listens of the track with hash @p from to @p to, unless a track in the library still has @p from.
+    void moveTrack(const QString& from, const QString& to) const;
+    //! Brings the details of the track kept with its listens, such as its album, up to date with @p entry.
+    void refreshMetadata(const PlayHistoryEntry& entry) const;
+
     //! Listens in [from, to), oldest first.
     [[nodiscard]] PlayHistoryData load(qint64 from, qint64 to) const;
     [[nodiscard]] PlayHistorySummary summary() const;
