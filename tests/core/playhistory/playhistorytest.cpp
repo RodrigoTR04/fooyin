@@ -300,6 +300,33 @@ TEST_F(PlayHistoryTest, FollowsATrackWhenRetaggingChangesItsHash)
     EXPECT_EQ(data.entries[0].title, u"New title"_s);
 }
 
+TEST_F(PlayHistoryTest, ChangingGenresKeepsListensWithTheTrackAndUpdatesTheirGenres)
+{
+    const auto db = database();
+    TrackDatabase trackDb;
+    trackDb.initialise(DbConnectionProvider{m_pool});
+
+    Track track{u"/music/song.flac"_s};
+    track.setTitle(u"Song"_s);
+    track.setGenres({u"Rock"_s});
+    track.generateHash();
+    const QString hash = track.hash();
+
+    TrackList tracks{track};
+    ASSERT_TRUE(trackDb.storeTracks(tracks));
+    ASSERT_TRUE(db.insert(PlayHistoryEntry::fromTrack(tracks.front(), at(2025, 3, 1))));
+
+    tracks.front().setGenres({u"Jazz"_s, u"Blues"_s});
+    ASSERT_EQ(tracks.front().hash(), hash);
+    ASSERT_TRUE(trackDb.updateTrack(tracks.front()));
+
+    // Still the same track, now counted under its new genres
+    const auto data = db.load(0, at(2026, 1, 1));
+    ASSERT_EQ(data.entries.size(), 1U);
+    EXPECT_EQ(data.entries.front().hash, hash);
+    EXPECT_EQ(data.entries.front().genres, (QStringList{u"Jazz"_s, u"Blues"_s}));
+}
+
 TEST_F(PlayHistoryTest, KeepsTheAlbumOfListensUpToDateWhenOnlyTheAlbumArtistChanges)
 {
     const auto db = database();
