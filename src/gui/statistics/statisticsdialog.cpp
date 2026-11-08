@@ -660,10 +660,9 @@ QWidget* StatisticsDialog::makeObsession(const PlayHistoryStats& stats)
     if(!stats.obsessions.empty()) {
         std::vector<RowListWidget::Row> rows;
         for(const auto& obsession : stats.obsessions) {
-            rows.push_back(
-                trackRow(obsession, number(obsession.count) + u"×"_s, formatDay(dateOf(obsession.timestamp))));
+            rows.push_back(trackRow(obsession, number(obsession.count), formatDay(dateOf(obsession.timestamp))));
         }
-        card->addWidget(expandableRows(std::move(rows), 5, 5, card, false, m_service->art()));
+        card->addWidget(expandableRows(std::move(rows), 7, 7, card, false, m_service->art()));
     }
 
     if(const auto& session = stats.longestSession) {

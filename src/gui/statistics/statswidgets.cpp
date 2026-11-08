@@ -1157,20 +1157,32 @@ int TileLayout::layoutItems(const QRect& rect, bool apply) const
         return margins.top() + margins.bottom();
     }
 
-    const int columns
-        = std::clamp((inner.width() + m_spacing) / (m_minTileWidth + m_spacing), 1, static_cast<int>(m_items.size()));
-    const int tileWidth = (inner.width() - m_spacing * (columns - 1)) / columns;
+    // As many tiles in a row as fit, then the tiles shared out evenly between the rows that needs, so that no row is
+    // left with just a few. Each row's tiles share the whole width.
+    const auto total     = static_cast<int>(m_items.size());
+    const int fit        = std::clamp((inner.width() + m_spacing) / (m_minTileWidth + m_spacing), 1, total);
+    const int rows       = (total + fit - 1) / fit;
+    const int perRow     = total / rows;
+    const int longerRows = total % rows;
 
     int y{inner.y()};
-    for(int start{0}; start < m_items.size(); start += columns) {
+    int next{0};
+    for(int row{0}; row < rows; ++row) {
+        const int tiles     = perRow + (row < longerRows ? 1 : 0);
+        const int available = inner.width() - m_spacing * (tiles - 1);
+
         int rowHeight{0};
-        for(int i{start}; i < std::min<int>(start + columns, static_cast<int>(m_items.size())); ++i) {
-            QLayoutItem* item = m_items[i];
-            const int height  = item->hasHeightForWidth() ? item->heightForWidth(tileWidth) : item->sizeHint().height();
+        int x{inner.x()};
+        for(int i{0}; i < tiles; ++i, ++next) {
+            // Spread the leftover pixels over the first tiles so the row ends exactly at the edge
+            const int width   = available / tiles + (i < available % tiles ? 1 : 0);
+            QLayoutItem* item = m_items[next];
+            const int height  = item->hasHeightForWidth() ? item->heightForWidth(width) : item->sizeHint().height();
             if(apply) {
-                item->setGeometry(QRect{inner.x() + (i - start) * (tileWidth + m_spacing), y, tileWidth, height});
+                item->setGeometry(QRect{x, y, width, height});
             }
             rowHeight = std::max(rowHeight, height);
+            x += width + m_spacing;
         }
         y += rowHeight + m_spacing;
     }
