@@ -133,17 +133,12 @@ QLabel* captionLabel(const QString& text, QWidget* parent)
     return label;
 }
 
-QGridLayout* tileGrid(const std::vector<MiniTile*>& tiles, int columns = 3)
+//! Tiles in as many columns as fit
+TileLayout* tileGrid(const std::vector<MiniTile*>& tiles)
 {
-    auto* grid = new QGridLayout();
-    grid->setContentsMargins(0, 0, 0, 0);
-    grid->setSpacing(8);
-
-    for(size_t i{0}; i < tiles.size(); ++i) {
-        grid->addWidget(tiles[i], static_cast<int>(i) / columns, static_cast<int>(i) % columns);
-    }
-    for(int column{0}; column < columns; ++column) {
-        grid->setColumnStretch(column, 1);
+    auto* grid = new TileLayout();
+    for(auto* tile : tiles) {
+        grid->addWidget(tile);
     }
     return grid;
 }
@@ -197,7 +192,7 @@ StatisticsDialog::StatisticsDialog(StatisticsService* service, QWidget* parent)
     , m_category{Category::Genre}
 {
     setWindowTitle(tr("Statistics"));
-    resize(820, 880);
+    resize(1200, 880);
 
     auto* layout = new QVBoxLayout(this);
 
@@ -391,10 +386,10 @@ void StatisticsDialog::showStats(const PlayHistoryStats& current, const std::opt
         return;
     }
 
+    // Cards go in two columns when there's room, and one when there isn't
     auto* content = new QWidget();
-    auto* layout  = new QVBoxLayout(content);
+    auto* layout  = new MasonryLayout(content, 12, 440);
     layout->setContentsMargins(0, 4, 8, 12);
-    layout->setSpacing(12);
 
     addOverview(layout, stats, previous);
     if(stats.totalDays() > 31) {
@@ -428,7 +423,6 @@ void StatisticsDialog::showStats(const PlayHistoryStats& current, const std::opt
     if(!stats.decades.empty()) {
         addDecades(layout, stats);
     }
-    layout->addStretch();
 
     setContent(content);
     m_exportButton->setEnabled(true);
@@ -457,7 +451,7 @@ void StatisticsDialog::exportImage()
     content->grab().save(path, "PNG");
 }
 
-void StatisticsDialog::addOverview(QVBoxLayout* layout, const PlayHistoryStats& stats,
+void StatisticsDialog::addOverview(Stats::MasonryLayout* layout, const PlayHistoryStats& stats,
                                    const std::optional<PlayHistoryStats>& previous)
 {
     auto* card = new StatsCard({});
@@ -490,10 +484,10 @@ void StatisticsDialog::addOverview(QVBoxLayout* layout, const PlayHistoryStats& 
         card->addWidget(caption);
     }
 
-    layout->addWidget(card);
+    layout->addSpanningWidget(card);
 }
 
-void StatisticsDialog::addMonths(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addMonths(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     const QLocale locale;
     std::vector<ChartData> points;
@@ -527,7 +521,7 @@ void StatisticsDialog::addMonths(QVBoxLayout* layout, const PlayHistoryStats& st
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addListens(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addListens(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Listens"), formatRange(stats.firstDay, stats.lastDay));
 
@@ -547,7 +541,7 @@ void StatisticsDialog::addListens(QVBoxLayout* layout, const PlayHistoryStats& s
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addDays(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addDays(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     QString subtitle;
     if(stats.longestStreak) {
@@ -559,11 +553,16 @@ void StatisticsDialog::addDays(QVBoxLayout* layout, const PlayHistoryStats& stat
     auto* card  = new StatsCard(tr("Days"), subtitle);
     auto* chart = new CalendarHeatmapChart(card);
     chart->setData(stats.listensPerDay, stats.firstDay);
+    // Long periods are shown as whole calendar years, the days outside the period being faded
+    if(stats.totalDays() >= 180) {
+        chart->setDisplayRange(QDate{stats.firstDay.year(), 1, 1}, QDate{stats.lastDay.year(), 12, 31});
+    }
     card->addWidget(chart);
-    layout->addWidget(card);
+    // A calendar of whole years reads best as a single row, so it takes the width of both columns
+    layout->addSpanningWidget(card);
 }
 
-void StatisticsDialog::addListeningClock(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addListeningClock(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     const QLocale locale;
     // Sunday first, matching the data
@@ -608,7 +607,7 @@ void StatisticsDialog::addListeningClock(QVBoxLayout* layout, const PlayHistoryS
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addHabits(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addHabits(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     const int repeatPercent = stats.totalListens <= 1
                                 ? 0
@@ -651,7 +650,7 @@ void StatisticsDialog::addHabits(QVBoxLayout* layout, const PlayHistoryStats& st
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addObsession(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addObsession(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Obsession"), stats.obsessions.empty() ? QString{} : tr("Most played • day"));
 
@@ -667,14 +666,13 @@ void StatisticsDialog::addObsession(QVBoxLayout* layout, const PlayHistoryStats&
     if(const auto& session = stats.longestSession) {
         card->addWidget(captionLabel(tr("Longest session • %1").arg(formatDay(dateOf(session->startMs))), card));
         card->addLayout(tileGrid({new MiniTile(minuteRange(*session), formatDuration(session->durationMs())),
-                                  new MiniTile(tr("Listens"), number(session->listens))},
-                                 3));
+                                  new MiniTile(tr("Listens"), number(session->listens))}));
     }
 
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addDiscoveries(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addDiscoveries(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card
         = new StatsCard(tr("Discoveries"), tr("First listen • %1").arg(formatRange(stats.firstDay, stats.lastDay)));
@@ -712,7 +710,7 @@ void StatisticsDialog::addDiscoveries(QVBoxLayout* layout, const PlayHistoryStat
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addTopTracks(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addTopTracks(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Top tracks"));
 
@@ -725,7 +723,7 @@ void StatisticsDialog::addTopTracks(QVBoxLayout* layout, const PlayHistoryStats&
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addMostPlayed(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addMostPlayed(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     std::vector<RowListWidget::Row> rows;
     for(const Category category : {Category::Artist, Category::Album, Category::Genre}) {
@@ -749,7 +747,7 @@ void StatisticsDialog::addMostPlayed(QVBoxLayout* layout, const PlayHistoryStats
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addTopArtists(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addTopArtists(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     const auto& artists = stats.category(Category::Artist).top;
 
@@ -779,7 +777,7 @@ void StatisticsDialog::addTopArtists(QVBoxLayout* layout, const PlayHistoryStats
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addRediscoveries(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addRediscoveries(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Rediscoveries"),
                                tr("Last listen over %1 ago").arg(daysText(PlayHistoryStats::RediscoveryGapDays)));
@@ -796,7 +794,7 @@ void StatisticsDialog::addRediscoveries(QVBoxLayout* layout, const PlayHistorySt
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addCompletedAlbums(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addCompletedAlbums(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Completed albums"),
                                categoryCountText(Category::Album, static_cast<int>(stats.completedAlbums.size())));
@@ -813,7 +811,7 @@ void StatisticsDialog::addCompletedAlbums(QVBoxLayout* layout, const PlayHistory
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addCategories(QVBoxLayout* layout, const PlayHistoryStats& /*stats*/)
+void StatisticsDialog::addCategories(Stats::MasonryLayout* layout, const PlayHistoryStats& /*stats*/)
 {
     auto* card = new StatsCard(tr("Listens by"));
 
@@ -859,7 +857,7 @@ void StatisticsDialog::addCategories(QVBoxLayout* layout, const PlayHistoryStats
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addAudioQuality(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addAudioQuality(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     const int total = stats.losslessListens + stats.lossyListens;
 
@@ -891,7 +889,7 @@ void StatisticsDialog::addAudioQuality(QVBoxLayout* layout, const PlayHistorySta
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addListenTime(QVBoxLayout* layout, const PlayHistoryStats& /*stats*/)
+void StatisticsDialog::addListenTime(Stats::MasonryLayout* layout, const PlayHistoryStats& /*stats*/)
 {
     const qint64 listenMs  = m_summary.totalListenMs;
     const qint64 libraryMs = m_service->libraryInfo().durationMs;
@@ -913,7 +911,7 @@ void StatisticsDialog::addListenTime(QVBoxLayout* layout, const PlayHistoryStats
     layout->addWidget(card);
 }
 
-void StatisticsDialog::addDecades(QVBoxLayout* layout, const PlayHistoryStats& stats)
+void StatisticsDialog::addDecades(Stats::MasonryLayout* layout, const PlayHistoryStats& stats)
 {
     std::vector<ChartData> points;
     for(const auto& decade : stats.decades) {

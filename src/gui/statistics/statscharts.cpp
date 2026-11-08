@@ -1172,6 +1172,9 @@ void CalendarHeatmapChart::setData(std::vector<int> listensPerDay, const QDate& 
     m_lastDay  = firstDay.addDays(static_cast<qint64>(m_values.size()) - 1);
     m_maxValue = m_values.empty() ? 0 : *std::ranges::max_element(m_values);
 
+    m_displayFirst = m_firstDay;
+    m_displayLast  = m_lastDay;
+
     setHovered(-1);
     updateGeometry();
     restartReveal();
@@ -1181,6 +1184,18 @@ void CalendarHeatmapChart::setMaxCellSize(int size)
 {
     m_maxCell = size;
     updateGeometry();
+}
+
+void CalendarHeatmapChart::setDisplayRange(const QDate& first, const QDate& last)
+{
+    if(m_values.empty()) {
+        return;
+    }
+
+    m_displayFirst = std::min(first, m_firstDay);
+    m_displayLast  = std::max(last, m_lastDay);
+    updateGeometry();
+    update();
 }
 
 void CalendarHeatmapChart::setWrapping(bool wrap)
@@ -1210,12 +1225,13 @@ CalendarHeatmapChart::Layout CalendarHeatmapChart::layoutFor(int width) const
 
     // A year or less is one block, anything longer gets a block per calendar year
     std::vector<std::pair<QDate, QDate>> blocks;
-    if(m_values.size() <= 371) {
-        blocks.emplace_back(m_firstDay, m_lastDay);
+    if(m_displayFirst.daysTo(m_displayLast) < 371) {
+        blocks.emplace_back(m_displayFirst, m_displayLast);
     }
     else {
-        for(int year = m_firstDay.year(); year <= m_lastDay.year(); ++year) {
-            blocks.emplace_back(std::max(m_firstDay, QDate{year, 1, 1}), std::min(m_lastDay, QDate{year, 12, 31}));
+        for(int year = m_displayFirst.year(); year <= m_displayLast.year(); ++year) {
+            blocks.emplace_back(std::max(m_displayFirst, QDate{year, 1, 1}),
+                                std::min(m_displayLast, QDate{year, 12, 31}));
         }
     }
     layout.showYears = blocks.size() > 1;
@@ -1331,7 +1347,8 @@ int CalendarHeatmapChart::hitTest(const QPoint& pos) const
     }
 
     const QDate day = layout.strips[strip].gridStart.addDays(week * 7 + row);
-    if(day < layout.strips[strip].start || day > layout.strips[strip].end) {
+    // Days outside what the data covers are only there to complete the calendar
+    if(day < layout.strips[strip].start || day > layout.strips[strip].end || day < m_firstDay || day > m_lastDay) {
         return -1;
     }
     return static_cast<int>(m_firstDay.daysTo(day));
@@ -1412,7 +1429,11 @@ void CalendarHeatmapChart::paintEvent(QPaintEvent* /*event*/)
                 const int level = std::clamp(static_cast<int>(std::ceil(4.0 * value / m_maxValue)), 1, 4);
                 colour          = colours().ramp(level / 4.0);
             }
-            if(static_cast<int>(m_firstDay.daysTo(day)) == hovered()) {
+            if(day < m_firstDay || day > m_lastDay) {
+                // Not part of the period, so fade it out
+                colour = withAlpha(colours().grid, 70);
+            }
+            else if(static_cast<int>(m_firstDay.daysTo(day)) == hovered()) {
                 colour = colour.lighter(125);
             }
 

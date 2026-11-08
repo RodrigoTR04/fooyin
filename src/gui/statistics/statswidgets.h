@@ -308,6 +308,73 @@ private:
     int m_spacing;
 };
 
+//! Lays widgets out in columns, each going under the column with the least in it. Narrow windows get a single column.
+class MasonryLayout : public QLayout
+{
+    Q_OBJECT
+
+public:
+    explicit MasonryLayout(QWidget* parent = nullptr, int spacing = 12, int minColumnWidth = 430, int maxColumns = 2);
+    ~MasonryLayout() override;
+
+    //! Adds a widget that takes the full width, below everything added before it.
+    void addSpanningWidget(QWidget* widget);
+
+    void addItem(QLayoutItem* item) override;
+    [[nodiscard]] int count() const override;
+    [[nodiscard]] QLayoutItem* itemAt(int index) const override;
+    QLayoutItem* takeAt(int index) override;
+    [[nodiscard]] Qt::Orientations expandingDirections() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
+    [[nodiscard]] int heightForWidth(int width) const override;
+    void setGeometry(const QRect& rect) override;
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSize() const override;
+
+private:
+    struct Entry
+    {
+        QLayoutItem* item{nullptr};
+        bool spanning{false};
+    };
+
+    int layoutItems(const QRect& rect, bool apply) const;
+
+    std::vector<Entry> m_entries;
+    int m_spacing;
+    int m_minColumnWidth;
+    int m_maxColumns;
+    bool m_nextSpanning;
+};
+
+//! Lays widgets out in a grid of equally wide tiles, with as many columns as fit the width.
+class TileLayout : public QLayout
+{
+    Q_OBJECT
+
+public:
+    explicit TileLayout(int minTileWidth = 170, int spacing = 8);
+    ~TileLayout() override;
+
+    void addItem(QLayoutItem* item) override;
+    [[nodiscard]] int count() const override;
+    [[nodiscard]] QLayoutItem* itemAt(int index) const override;
+    QLayoutItem* takeAt(int index) override;
+    [[nodiscard]] Qt::Orientations expandingDirections() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
+    [[nodiscard]] int heightForWidth(int width) const override;
+    void setGeometry(const QRect& rect) override;
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSize() const override;
+
+private:
+    int layoutItems(const QRect& rect, bool apply) const;
+
+    QList<QLayoutItem*> m_items;
+    int m_minTileWidth;
+    int m_spacing;
+};
+
 //! The dark card each page of the year in review is shown on, tinted by a colour from the year's top cover.
 class StoryCard : public QWidget
 {

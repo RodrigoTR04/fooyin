@@ -305,6 +305,11 @@ public:
     void setMaxCellSize(int size);
     //! Whether the weeks continue on a new row rather than shrinking the cells when there isn't room.
     void setWrapping(bool wrap);
+    /*!
+     * Shows the days from @p first to @p last, which should include those the data covers. Days outside the data
+     * are drawn faded and have no tooltip, so a period can be shown as the whole calendar years it falls in.
+     */
+    void setDisplayRange(const QDate& first, const QDate& last);
 
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] bool hasHeightForWidth() const override;
@@ -352,6 +357,8 @@ private:
     std::vector<int> m_values;
     QDate m_firstDay;
     QDate m_lastDay;
+    QDate m_displayFirst;
+    QDate m_displayLast;
     int m_maxValue;
     int m_maxCell;
     bool m_wrap;
