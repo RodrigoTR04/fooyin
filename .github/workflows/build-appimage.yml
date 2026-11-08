@@ -7,9 +7,15 @@ on:
         required: false
         type: string
         default: ''
+      update_channel:
+        description: GitHub release channel used for AppImage updates
+        required: false
+        type: string
+        default: latest
 
 env:
   FOOYIN_VERSION_SUFFIX: ${{ inputs.version_suffix }}
+  FOOYIN_APPIMAGE_UPDATE_CHANNEL: ${{ inputs.update_channel }}
   BUILD_CCACHE: ON
   BUILD_PCH: ON
   CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -31,12 +37,13 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     container:
-      image: debian:bookworm
+      image: ghcr.io/pkgforge-dev/archlinux:latest
     steps:
-      - name: Install git
-        run: |
-          apt-get update -qq
-          apt-get install -qq --yes ca-certificates git
+      - name: Prepare AppImage tools
+        uses: pkgforge-dev/anylinux-setup-action@ba7321e11074f9e387a0634e653d09b115d576cd # v6
+        env:
+          QUICK_SHARUN: https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/87f1a9c11c73f23e46a0e7ecd2467d40aaaf0392/useful-tools/quick-sharun.sh
+          DEBLOATED_PACKAGES: https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/87f1a9c11c73f23e46a0e7ecd2467d40aaaf0392/useful-tools/get-debloated-pkgs.sh
 
       - name: Checkout
         uses: actions/checkout@v7
@@ -46,12 +53,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          ./ci/ubuntu-depends.sh
-          apt-get install -y \
-            curl \
-            file \
-            patchelf \
-            qt6-wayland
+          ./ci/appimage-depends.sh
 
       - name: Set ccache generation
         id: ccache-generation
@@ -62,9 +64,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: appimage-debian-bookworm-${{ matrix.arch }}-ccache-${{ steps.ccache-generation.outputs.period }}
+          key: appimage-archlinux-${{ matrix.arch }}-ccache-${{ steps.ccache-generation.outputs.period }}
           restore-keys: |
-            appimage-debian-bookworm-${{ matrix.arch }}-ccache-
+            appimage-archlinux-${{ matrix.arch }}-ccache-
 
       - name: Build AppImage
         run: |
@@ -74,7 +76,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: appimage-${{ matrix.arch }}
-          path: build-appimage/output/*.AppImage
+          path: |
+            build-appimage/output/*.AppImage
+            build-appimage/output/*.AppImage.zsync
           compression-level: 0
           if-no-files-found: error
 

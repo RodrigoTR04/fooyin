@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include <gui/coverartworktypes.h>
+
 #include <QDataStream>
 #include <QString>
 

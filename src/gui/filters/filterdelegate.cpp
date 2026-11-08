@@ -27,7 +27,6 @@
 #include <gui/scripting/richtextutils.h>
 #include <gui/widgets/expandedtreeview.h>
 #include <gui/widgets/widgetbackground.h>
-#include <utils/utils.h>
 
 #include <QApplication>
 #include <QPainter>
@@ -181,6 +180,7 @@ QSize richTextNaturalSize(const QStyleOptionViewItem& option, const RichText& ri
 FilterDelegate::FilterDelegate(QObject* parent)
     : QStyledItemDelegate{parent}
     , m_artworkCornerRadius{0}
+    , m_artworkScaling{ArtworkScaling::Fit}
     , m_coverFlowPixmaps{static_cast<qsizetype>(Settings::Gui::Internal::DefaultCoverFlowCacheSize * 1024 * 1024)}
 { }
 
@@ -242,8 +242,15 @@ void FilterDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
     if(hasArtwork) {
         const double dpr = opt.widget ? opt.widget->devicePixelRatioF() : 1.0;
         const auto mode  = opt.state.testFlag(QStyle::State_Enabled) ? QIcon::Normal : QIcon::Disabled;
-        scaledArtwork = Utils::scalePixmap(artworkIcon.pixmap(decorationRect.size(), dpr, mode), decorationRect.size(),
-                                           dpr, true);
+        QSize sourceSize = decorationRect.size();
+        if(m_artworkScaling != ArtworkScaling::Fit) {
+            const QSize available = artworkIcon.actualSize(sourceSize, mode);
+            if(!available.isEmpty() && !sourceSize.isEmpty()) {
+                sourceSize = available.scaled(sourceSize, Qt::KeepAspectRatioByExpanding);
+            }
+        }
+        scaledArtwork = Gui::scaleArtworkPixmap(artworkIcon.pixmap(sourceSize, dpr, mode), decorationRect.size(), dpr,
+                                                m_artworkScaling);
     }
 
     const auto drawArtwork = [&]() {
@@ -385,6 +392,11 @@ void FilterDelegate::setArtworkCornerRadius(int radius)
 void FilterDelegate::setArtworkMargins(const QMargins& margins)
 {
     m_artworkMargins = margins;
+}
+
+void FilterDelegate::setArtworkScaling(ArtworkScaling scaling)
+{
+    m_artworkScaling = scaling;
 }
 
 void FilterDelegate::setCoverFlowCacheSize(int sizeMb)
