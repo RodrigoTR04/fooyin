@@ -38,10 +38,12 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -152,10 +154,12 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     , m_dots{new PageDots(this)}
     , m_previousButton{new QToolButton(this)}
     , m_nextButton{new QToolButton(this)}
+    , m_reloadTimer{new QTimer(this)}
     , m_year{0}
     , m_pendingYear{0}
     , m_requestId{0}
     , m_cardWidth{0}
+    , m_restorePage{-1}
 {
     setWindowTitle(tr("Year in review"));
     resize(580, 940);
@@ -208,6 +212,12 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     QObject::connect(m_nextButton, &QToolButton::clicked, this, [this]() { goToPage(m_stack->currentIndex() + 1); });
     QObject::connect(m_art, &StatsArt::coversChanged, this, &YearInReviewDialog::refreshTint);
 
+    // Listens counted while the dialog is open show up shortly after, rather than all at once in a burst
+    m_reloadTimer->setSingleShot(true);
+    m_reloadTimer->setInterval(1500);
+    QObject::connect(m_service, &StatisticsService::historyChanged, m_reloadTimer, qOverload<>(&QTimer::start));
+    QObject::connect(m_reloadTimer, &QTimer::timeout, this, &YearInReviewDialog::reloadSummary);
+
     loadSummary();
 }
 
@@ -252,25 +262,36 @@ void YearInReviewDialog::loadSummary()
     m_service->refreshLibraryInfo();
     showMessage(tr("Loading…"));
 
-    m_service->summary().then(this, [this](const PlayHistorySummary& summary) {
-        m_summary = summary;
+    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+}
 
-        if(summary.isEmpty()) {
-            showMessage(tr("There's no listening history yet.\n\nFooyin now records every track you listen to, so "
-                           "your year in review will appear here as you play music."));
-            return;
-        }
+void YearInReviewDialog::reloadSummary()
+{
+    // Stay on the same year and page, unless there was nothing to show yet
+    m_pendingYear = m_year;
+    m_restorePage = m_stack->currentIndex();
+    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+}
 
-        // Newest first
-        m_yearOrder.assign(summary.years.rbegin(), summary.years.rend());
-        QStringList labels;
-        for(const int year : m_yearOrder) {
-            labels.push_back(QString::number(year));
-        }
-        m_years->setItems(labels);
+void YearInReviewDialog::applySummary(const PlayHistorySummary& summary)
+{
+    m_summary = summary;
 
-        showYear(m_pendingYear);
-    });
+    if(summary.isEmpty()) {
+        showMessage(tr("There's no listening history yet.\n\nFooyin now records every track you listen to, so "
+                       "your year in review will appear here as you play music."));
+        return;
+    }
+
+    // Newest first
+    m_yearOrder.assign(summary.years.rbegin(), summary.years.rend());
+    QStringList labels;
+    for(const int year : m_yearOrder) {
+        labels.push_back(QString::number(year));
+    }
+    m_years->setItems(labels);
+
+    showYear(m_pendingYear);
 }
 
 void YearInReviewDialog::selectYear(int year)
@@ -369,7 +390,9 @@ void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
 
     m_dots->setCount(static_cast<int>(m_pages.size()));
     m_exportButton->setEnabled(true);
-    goToPage(0);
+
+    const int page = std::exchange(m_restorePage, -1);
+    goToPage(page >= 0 && page < static_cast<int>(m_pages.size()) ? page : 0);
 }
 
 void YearInReviewDialog::refreshTint()

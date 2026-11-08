@@ -37,11 +37,14 @@
 #include <QLocale>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -206,8 +209,10 @@ StatisticsDialog::StatisticsDialog(StatisticsService* service, QWidget* parent)
     , m_yearButton{new QPushButton(this)}
     , m_exportButton{new QPushButton(tr("Export image…"), this)}
     , m_scrollArea{new QScrollArea(this)}
+    , m_reloadTimer{new QTimer(this)}
     , m_period{Period::AllTime}
     , m_requestId{0}
+    , m_keepScroll{false}
     , m_cumulative{true}
     , m_category{Category::Genre}
 {
@@ -254,6 +259,12 @@ StatisticsDialog::StatisticsDialog(StatisticsService* service, QWidget* parent)
         }
     });
     QObject::connect(m_exportButton, &QPushButton::clicked, this, &StatisticsDialog::exportImage);
+
+    // Listens counted while the dialog is open show up shortly after, rather than all at once in a burst
+    m_reloadTimer->setSingleShot(true);
+    m_reloadTimer->setInterval(1500);
+    QObject::connect(m_service, &StatisticsService::historyChanged, m_reloadTimer, qOverload<>(&QTimer::start));
+    QObject::connect(m_reloadTimer, &QTimer::timeout, this, &StatisticsDialog::reloadSummary);
 
     loadSummary();
 }
@@ -339,14 +350,23 @@ void StatisticsDialog::loadSummary()
     m_service->refreshLibraryInfo();
     showMessage(tr("Loading…"));
 
-    m_service->summary().then(this, [this](const PlayHistorySummary& summary) {
-        m_summary = summary;
-        m_yearButton->setVisible(!summary.years.empty());
-        if(!summary.years.empty()) {
-            m_yearButton->setText(tr("Your %1").arg(summary.years.back()));
-        }
-        refresh();
-    });
+    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+}
+
+void StatisticsDialog::reloadSummary()
+{
+    m_keepScroll = true;
+    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+}
+
+void StatisticsDialog::applySummary(const PlayHistorySummary& summary)
+{
+    m_summary = summary;
+    m_yearButton->setVisible(!summary.years.empty());
+    if(!summary.years.empty()) {
+        m_yearButton->setText(tr("Your %1").arg(summary.years.back()));
+    }
+    refresh();
 }
 
 void StatisticsDialog::refresh()
@@ -391,8 +411,16 @@ void StatisticsDialog::showMessage(const QString& message)
 
 void StatisticsDialog::setContent(QWidget* content)
 {
+    const int scrolled = m_scrollArea->verticalScrollBar()->value();
+
     // The scroll area deletes the previous content
     m_scrollArea->setWidget(content);
+
+    if(std::exchange(m_keepScroll, false)) {
+        // The new content doesn't have its size until it's been laid out
+        QTimer::singleShot(0, m_scrollArea,
+                           [this, scrolled]() { m_scrollArea->verticalScrollBar()->setValue(scrolled); });
+    }
 }
 
 void StatisticsDialog::showStats(const PlayHistoryStats& current, const std::optional<PlayHistoryStats>& previous)
@@ -911,9 +939,9 @@ QWidget* StatisticsDialog::makeAudioQuality(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeListenTime(const PlayHistoryStats& /*stats*/)
+QWidget* StatisticsDialog::makeListenTime(const PlayHistoryStats& stats)
 {
-    const qint64 listenMs  = m_summary.totalListenMs;
+    const qint64 listenMs  = stats.listenSeconds * 1000;
     const qint64 libraryMs = m_service->libraryInfo().durationMs;
     const double fraction  = libraryMs > 0 ? static_cast<double>(listenMs) / static_cast<double>(libraryMs) : 0.0;
 

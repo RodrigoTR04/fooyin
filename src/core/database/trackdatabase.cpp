@@ -439,6 +439,8 @@ bool TrackDatabase::updateTrack(const Track& track)
                                      "CreatedDate = :createdDate"
                                      " WHERE TrackID = :trackId;"_s;
 
+    const QString previousHash = storedHash(track.id());
+
     DbQuery query{db(), statement};
 
     query.bindValue(u":trackId"_s, track.id());
@@ -448,7 +450,43 @@ bool TrackDatabase::updateTrack(const Track& track)
         query.bindValue(name, value);
     }
 
-    return query.exec();
+    if(!query.exec()) {
+        return false;
+    }
+
+    migratePlayHistory(previousHash, track.hash());
+    return true;
+}
+
+QString TrackDatabase::storedHash(int id) const
+{
+    static const QString statement = u"SELECT TrackHash FROM Tracks WHERE TrackID = :trackId;"_s;
+
+    DbQuery query{db(), statement};
+    query.bindValue(u":trackId"_s, id);
+
+    if(query.exec() && query.next()) {
+        return query.value(0).toString();
+    }
+    return {};
+}
+
+void TrackDatabase::migratePlayHistory(const QString& previousHash, const QString& newHash) const
+{
+    if(previousHash.isEmpty() || newHash.isEmpty() || previousHash == newHash) {
+        return;
+    }
+
+    // Tracks are identified in the history by hash, which changes with the tags that make it up. Unless another
+    // track is still known by the old hash, its listens belong to the track as it is now
+    static const QString statement = u"UPDATE PlayHistory SET Hash = :newHash WHERE Hash = :previousHash AND NOT "
+                                     "EXISTS (SELECT 1 FROM Tracks WHERE TrackHash = :remainingHash);"_s;
+
+    DbQuery query{db(), statement};
+    query.bindValue(u":newHash"_s, newHash);
+    query.bindValue(u":previousHash"_s, previousHash);
+    query.bindValue(u":remainingHash"_s, previousHash);
+    query.exec();
 }
 
 bool TrackDatabase::updateTrackStats(const Track& track)

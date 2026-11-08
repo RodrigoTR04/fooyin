@@ -30,6 +30,7 @@
 
 class QPushButton;
 class QScrollArea;
+class QTimer;
 class QVBoxLayout;
 
 namespace Fooyin {
@@ -71,6 +72,9 @@ private:
     void setCustomRange(const QDate& first, const QDate& last);
 
     void loadSummary();
+    void applySummary(const PlayHistorySummary& summary);
+    //! Brings what's shown up to date after listens have been recorded, without disturbing it.
+    void reloadSummary();
     void refresh();
     void showStats(const PlayHistoryStats& current, const std::optional<PlayHistoryStats>& previous);
     void showMessage(const QString& message);
@@ -102,6 +106,7 @@ private:
     QPushButton* m_yearButton;
     QPushButton* m_exportButton;
     QScrollArea* m_scrollArea;
+    QTimer* m_reloadTimer;
 
     PlayHistorySummary m_summary;
     std::shared_ptr<const PlayHistoryStats> m_stats;
@@ -109,6 +114,7 @@ private:
     QDate m_customFirst;
     QDate m_customLast;
     int m_requestId;
+    bool m_keepScroll;
 
     bool m_cumulative;
     PlayHistoryStats::Category m_category;

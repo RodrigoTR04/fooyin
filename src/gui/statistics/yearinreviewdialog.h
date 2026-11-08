@@ -29,6 +29,7 @@
 #include <vector>
 
 class QStackedWidget;
+class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
@@ -62,6 +63,9 @@ protected:
 
 private:
     void loadSummary();
+    void applySummary(const PlayHistorySummary& summary);
+    //! Brings the years up to date after listens have been recorded, staying on the year and page being shown.
+    void reloadSummary();
     void selectYear(int year);
     void showMessage(const QString& message);
     void clearPages();
@@ -98,6 +102,7 @@ private:
     Stats::PageDots* m_dots;
     QToolButton* m_previousButton;
     QToolButton* m_nextButton;
+    QTimer* m_reloadTimer;
 
     PlayHistorySummary m_summary;
     std::vector<int> m_yearOrder;
@@ -107,5 +112,6 @@ private:
     int m_pendingYear;
     int m_requestId;
     int m_cardWidth;
+    int m_restorePage;
 };
 } // namespace Fooyin

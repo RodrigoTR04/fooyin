@@ -156,12 +156,11 @@ PlayHistorySummary PlayHistoryDatabase::summary() const
     PlayHistorySummary summary;
 
     {
-        DbQuery query{db(), u"SELECT COUNT(*), MIN(Timestamp), MAX(Timestamp), SUM(Duration) FROM PlayHistory;"_s};
+        DbQuery query{db(), u"SELECT COUNT(*), MIN(Timestamp), MAX(Timestamp) FROM PlayHistory;"_s};
         if(query.exec() && query.next()) {
             summary.totalListens    = query.value(0).toInt();
             summary.oldestTimestamp = query.value(1).toLongLong();
             summary.newestTimestamp = query.value(2).toLongLong();
-            summary.totalListenMs   = query.value(3).toLongLong();
         }
     }
 

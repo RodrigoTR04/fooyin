@@ -66,6 +66,10 @@ public:
 
 private:
     [[nodiscard]] int trackCount() const;
+    //! The hash currently stored for the track with @p id, or an empty string if there isn't one.
+    [[nodiscard]] QString storedHash(int id) const;
+    //! Moves the play history of a track whose hash has changed, such as by retagging it, to the new hash.
+    void migratePlayHistory(const QString& previousHash, const QString& newHash) const;
     bool insertTrack(Track& track, bool ignoreDuplicates = false) const;
 
     struct StoredTrackStats

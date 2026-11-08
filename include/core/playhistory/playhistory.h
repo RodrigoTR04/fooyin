@@ -94,8 +94,6 @@ struct FYCORE_EXPORT PlayHistorySummary
     int totalListens{0};
     qint64 oldestTimestamp{0};
     qint64 newestTimestamp{0};
-    //! Total duration of every recorded listen in milliseconds.
-    qint64 totalListenMs{0};
     //! Calendar years (local time) containing at least one listen, ascending.
     std::vector<int> years;
 

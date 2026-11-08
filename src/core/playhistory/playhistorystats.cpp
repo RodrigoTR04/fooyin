@@ -85,8 +85,11 @@ QStringList categoryValues(const PlayHistoryEntry& entry, Category category)
             return entry.albumArtists;
         case Category::Composer:
             return entry.composers;
-        case Category::Album:
-            return entry.album.isEmpty() ? QStringList{} : QStringList{entry.album};
+        case Category::Album: {
+            // Albums that share a title but not album artists, such as two 'Greatest Hits', are different albums
+            const QString key = entry.albumKey();
+            return key.isEmpty() ? QStringList{} : QStringList{key};
+        }
     }
     return {};
 }
@@ -171,10 +174,13 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
     QHash<QString, int> artistCounts;
     std::map<int, int> decadeCounts;
     QHash<QString, std::pair<QSet<QString>, int>> albumHeard;
+    // Title and album artists of each album listened to, by album key
+    QHash<QString, std::pair<QString, QString>> albumNames;
     std::array<QHash<QString, std::pair<const PlayHistoryEntry*, int>>, 12> monthCounts;
 
     qint64 sessionStart{0};
     qint64 sessionEnd{0};
+    qint64 sessionLastDuration{0};
     int sessionListens{0};
     const auto finishSession = [&stats, &sessionStart, &sessionEnd, &sessionListens]() {
         if(sessionListens < 2) {
@@ -235,12 +241,17 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
         }
         previous = &entry;
 
-        if(sessionListens == 0 || entry.timestamp - sessionEnd > PlayHistoryStats::SessionGapMs) {
+        // A listen is counted part way through a track, so tracks played one after the other are counted about a track
+        // length apart. Long tracks therefore need more leeway than the usual gap, or they'd each be a session
+        const auto duration     = static_cast<qint64>(entry.duration);
+        const qint64 allowedGap = PlayHistoryStats::SessionGapMs + std::max(duration, sessionLastDuration);
+        if(sessionListens == 0 || entry.timestamp - sessionEnd > allowedGap) {
             finishSession();
             sessionStart   = entry.timestamp;
             sessionListens = 0;
         }
-        sessionEnd = entry.timestamp;
+        sessionEnd          = entry.timestamp;
+        sessionLastDuration = duration;
         ++sessionListens;
 
         auto trackIt = tracks.find(entry.hash);
@@ -301,6 +312,7 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
             auto& album = albumHeard[albumKey];
             album.first.insert(entry.hash);
             ++album.second;
+            albumNames.insert(albumKey, {entry.album, entry.albumArtists.join(u", "_s)});
         }
 
         stats.listenSeconds += static_cast<qint64>(entry.duration / 1000);
@@ -317,6 +329,19 @@ PlayHistoryStats computePlayHistoryStats(const PlayHistoryData& data, QDate firs
     stats.uniqueArtists = stats.category(Category::Artist).unique;
     stats.uniqueGenres  = stats.category(Category::Genre).unique;
     stats.uniqueAlbums  = stats.category(Category::Album).unique;
+
+    // Albums are ranked by key, but shown by title, along with the album artists only where titles would clash
+    {
+        QHash<QString, int> titleUses;
+        for(auto it = albumNames.cbegin(); it != albumNames.cend(); ++it) {
+            ++titleUses[it.value().first];
+        }
+        auto& albums = stats.categories[static_cast<size_t>(Category::Album)];
+        for(auto& rank : albums.top) {
+            const auto& [title, albumArtists] = albumNames.value(rank.key);
+            rank.key = titleUses.value(title) > 1 && !albumArtists.isEmpty() ? title + u" — "_s + albumArtists : title;
+        }
+    }
 
     for(const int listens : stats.listensPerDay) {
         if(listens > 0) {

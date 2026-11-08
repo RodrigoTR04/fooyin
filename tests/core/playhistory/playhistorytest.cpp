@@ -19,6 +19,7 @@
 
 #include "core/database/dbschema.h"
 #include "core/database/playhistorydatabase.h"
+#include "core/database/trackdatabase.h"
 
 #include <core/playhistory/playhistory.h>
 #include <core/track.h>
@@ -251,9 +252,64 @@ TEST_F(PlayHistoryTest, SummarisesTheWholeHistory)
     EXPECT_EQ(summary.totalListens, 3);
     EXPECT_EQ(summary.oldestTimestamp, at(2023, 5, 1));
     EXPECT_EQ(summary.newestTimestamp, at(2025, 12, 31, 20));
-    EXPECT_EQ(summary.totalListenMs, 600'000);
     // Years with nothing in them are left out
     EXPECT_EQ(summary.years, (std::vector<int>{2023, 2025}));
+}
+
+TEST_F(PlayHistoryTest, FollowsATrackWhenRetaggingChangesItsHash)
+{
+    const auto db = database();
+    TrackDatabase trackDb;
+    trackDb.initialise(DbConnectionProvider{m_pool});
+
+    Track track{u"/music/song.flac"_s};
+    track.setTitle(u"Old title"_s);
+    track.generateHash();
+    const QString oldHash = track.hash();
+
+    TrackList tracks{track};
+    ASSERT_TRUE(trackDb.storeTracks(tracks));
+    ASSERT_TRUE(db.insert(makeEntry(oldHash, at(2025, 3, 1))));
+    ASSERT_TRUE(db.insert(makeEntry(oldHash, at(2025, 3, 2))));
+
+    tracks.front().setTitle(u"New title"_s);
+    ASSERT_NE(tracks.front().hash(), oldHash);
+    ASSERT_TRUE(trackDb.updateTrack(tracks.front()));
+
+    // Plays from before the retag are still the same track
+    const auto data = db.load(0, at(2026, 1, 1));
+    ASSERT_EQ(data.entries.size(), 2U);
+    EXPECT_EQ(data.entries[0].hash, tracks.front().hash());
+    EXPECT_EQ(data.entries[1].hash, tracks.front().hash());
+}
+
+TEST_F(PlayHistoryTest, LeavesHistoryAloneWhileAnotherTrackStillHasTheOldHash)
+{
+    const auto db = database();
+    TrackDatabase trackDb;
+    trackDb.initialise(DbConnectionProvider{m_pool});
+
+    // Two copies of the same track, so they share a hash
+    Track first{u"/music/a/song.flac"_s};
+    first.setTitle(u"Song"_s);
+    first.generateHash();
+    Track second{u"/music/b/song.flac"_s};
+    second.setTitle(u"Song"_s);
+    second.generateHash();
+    ASSERT_EQ(first.hash(), second.hash());
+    const QString sharedHash = first.hash();
+
+    TrackList tracks{first, second};
+    ASSERT_TRUE(trackDb.storeTracks(tracks));
+    ASSERT_TRUE(db.insert(makeEntry(sharedHash, at(2025, 3, 1))));
+
+    tracks.front().setTitle(u"Renamed"_s);
+    ASSERT_TRUE(trackDb.updateTrack(tracks.front()));
+
+    // Which of the copies the listen was of isn't known, so it stays with the one that still has the old hash
+    const auto data = db.load(0, at(2026, 1, 1));
+    ASSERT_EQ(data.entries.size(), 1U);
+    EXPECT_EQ(data.entries.front().hash, sharedHash);
 }
 
 TEST_F(PlayHistoryTest, KeepsValuesWithoutMetadata)

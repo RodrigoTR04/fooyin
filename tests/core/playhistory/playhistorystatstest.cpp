@@ -201,6 +201,35 @@ TEST(PlayHistoryStatsTest, SplitsSessionsOnLongGaps)
     EXPECT_EQ(stats.longestSession->startMs, at(Saturday, 10, 0));
 }
 
+TEST(PlayHistoryStatsTest, LongTracksPlayedBackToBackStayInOneSession)
+{
+    // Three 20 minute tracks counted 21 minutes apart, as they would be playing one after the other
+    std::vector<PlayHistoryEntry> entries;
+    for(int i{0}; i < 3; ++i) {
+        auto entry     = makeEntry(QString::number(i), at(Saturday, 10, 0) + i * 21LL * 60 * 1000);
+        entry.duration = 20 * 60 * 1000;
+        entries.push_back(entry);
+    }
+
+    const auto stats = computePlayHistoryStats(makeData(std::move(entries)), Saturday, Saturday);
+
+    ASSERT_TRUE(stats.longestSession.has_value());
+    EXPECT_EQ(stats.longestSession->listens, 3);
+}
+
+TEST(PlayHistoryStatsTest, AGapLongerThanTheTrackStillEndsASession)
+{
+    // The same tracks, but an hour apart, which is a break whatever their length
+    std::vector<PlayHistoryEntry> entries;
+    for(int i{0}; i < 2; ++i) {
+        auto entry     = makeEntry(QString::number(i), at(Saturday, 10, 0) + i * 60LL * 60 * 1000);
+        entry.duration = 20 * 60 * 1000;
+        entries.push_back(entry);
+    }
+
+    EXPECT_FALSE(computePlayHistoryStats(makeData(std::move(entries)), Saturday, Saturday).longestSession.has_value());
+}
+
 TEST(PlayHistoryStatsTest, SingleListensAreNotSessions)
 {
     const auto data = makeData({makeEntry(u"a"_s, at(Saturday, 10, 0)), makeEntry(u"b"_s, at(Saturday, 14, 0))});
@@ -352,6 +381,42 @@ TEST(PlayHistoryStatsTest, RanksCategoriesAndSplitsOutTracksWithSeveralValues)
     EXPECT_EQ(stats.category(Category::Album).top.front().key, u"Album One"_s);
     EXPECT_EQ(stats.category(Category::Composer).unique, 1);
     EXPECT_EQ(stats.category(Category::AlbumArtist).unique, 0);
+}
+
+TEST(PlayHistoryStatsTest, KeepsAlbumsWithTheSameTitleApart)
+{
+    const auto greatestHits = [](const QString& hash, const QString& artist, int minute) {
+        auto entry         = makeEntry(hash, at(Saturday, 10, minute));
+        entry.album        = u"Greatest Hits"_s;
+        entry.albumArtists = {artist};
+        return entry;
+    };
+
+    const auto data = makeData({greatestHits(u"a1"_s, u"Band A"_s, 0), greatestHits(u"a2"_s, u"Band A"_s, 1),
+                                greatestHits(u"b1"_s, u"Band B"_s, 2)});
+
+    const auto stats  = computePlayHistoryStats(data, Saturday, Saturday);
+    const auto& album = stats.category(PlayHistoryStats::Category::Album);
+
+    EXPECT_EQ(stats.uniqueAlbums, 2);
+    ASSERT_EQ(album.top.size(), 2U);
+    // The album artists are only shown because the titles are the same
+    EXPECT_EQ(album.top[0].key, u"Greatest Hits — Band A"_s);
+    EXPECT_EQ(album.top[0].count, 2);
+    EXPECT_EQ(album.top[1].key, u"Greatest Hits — Band B"_s);
+    EXPECT_EQ(album.top[1].count, 1);
+}
+
+TEST(PlayHistoryStatsTest, ShowsAlbumsWithADistinctTitleByTitleAlone)
+{
+    auto entry         = makeEntry(u"a"_s, at(Saturday, 10));
+    entry.album        = u"Night Circuits"_s;
+    entry.albumArtists = {u"Aurora Lane"_s};
+
+    const auto stats = computePlayHistoryStats(makeData({entry}), Saturday, Saturday);
+
+    ASSERT_EQ(stats.category(PlayHistoryStats::Category::Album).top.size(), 1U);
+    EXPECT_EQ(stats.category(PlayHistoryStats::Category::Album).top.front().key, u"Night Circuits"_s);
 }
 
 TEST(PlayHistoryStatsTest, SplitsReleaseDecadesAndAudioQuality)
