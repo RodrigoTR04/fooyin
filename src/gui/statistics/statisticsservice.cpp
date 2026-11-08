@@ -19,6 +19,8 @@
 
 #include "statisticsservice.h"
 
+#include "statsart.h"
+
 #include <core/library/musiclibrary.h>
 
 #include <QDateTime>
@@ -26,10 +28,12 @@
 #include <QSet>
 
 namespace Fooyin {
-StatisticsService::StatisticsService(PlayHistory* history, MusicLibrary* library, QObject* parent)
+StatisticsService::StatisticsService(PlayHistory* history, MusicLibrary* library, CoverRepository* covers,
+                                     QObject* parent)
     : QObject{parent}
     , m_history{history}
     , m_library{library}
+    , m_art{new StatsArt(covers, this)}
 {
     QObject::connect(m_history, &PlayHistory::playRecorded, this, &StatisticsService::historyChanged);
 }
@@ -41,6 +45,8 @@ void StatisticsService::refreshLibraryInfo()
     const TrackList tracks = m_library->tracks();
     QSet<QString> seen;
     seen.reserve(static_cast<qsizetype>(tracks.size()));
+    QHash<QString, Track> byHash;
+    byHash.reserve(static_cast<qsizetype>(tracks.size()));
 
     for(const Track& track : tracks) {
         const QString hash = track.hash().isEmpty() ? track.uniqueFilepath() : track.hash();
@@ -49,6 +55,7 @@ void StatisticsService::refreshLibraryInfo()
             continue;
         }
         seen.insert(hash);
+        byHash.insert(hash, track);
 
         ++info.trackCount;
         info.durationMs += static_cast<qint64>(track.duration());
@@ -62,6 +69,12 @@ void StatisticsService::refreshLibraryInfo()
     }
 
     m_libraryInfo = std::move(info);
+    m_art->setTracks(std::move(byHash));
+}
+
+StatsArt* StatisticsService::art() const
+{
+    return m_art;
 }
 
 const Stats::LibraryInfo& StatisticsService::libraryInfo() const

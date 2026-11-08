@@ -19,6 +19,10 @@
 
 #include "statswidgets.h"
 
+#include "statsart.h"
+
+#include <gui/iconloader.h>
+
 #include <QButtonGroup>
 #include <QCoreApplication>
 #include <QFontMetricsF>
@@ -28,6 +32,7 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QTime>
 #include <QVBoxLayout>
 
@@ -41,6 +46,12 @@ namespace {
 QString tr(const char* text)
 {
     return QCoreApplication::translate("Fooyin::Stats::Widgets", text);
+}
+
+QColor withAlpha(QColor colour, int alpha)
+{
+    colour.setAlpha(alpha);
+    return colour;
 }
 
 QFont scaled(QFont font, qreal factor, bool bold = false)
@@ -292,9 +303,20 @@ BigStat::BigStat(QString value, QString label, QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
+void BigStat::setDelta(qint64 current, qint64 previous)
+{
+    if(previous <= 0) {
+        m_delta.reset();
+    }
+    else {
+        m_delta = 100.0 * static_cast<double>(current - previous) / static_cast<double>(previous);
+    }
+    update();
+}
+
 QSize BigStat::sizeHint() const
 {
-    return {140, QFontMetrics{scaled(font(), 1.9, true)}.height() + QFontMetrics{scaled(font(), 0.9)}.height() + 2};
+    return {140, QFontMetrics{scaled(font(), 2.2, true)}.height() + QFontMetrics{scaled(font(), 1.0)}.height() + 2};
 }
 
 QSize BigStat::minimumSizeHint() const
@@ -307,8 +329,8 @@ void BigStat::paintEvent(QPaintEvent* /*event*/)
     QPainter painter{this};
     const auto colours = Colours::fromPalette(palette());
 
-    const QFont valueFont = scaled(font(), 1.9, true);
-    const QFont labelFont = scaled(font(), 0.9);
+    const QFont valueFont = scaled(font(), 2.2, true);
+    const QFont labelFont = scaled(font(), 1.0);
     const QFontMetricsF valueMetrics{valueFont};
     const QFontMetricsF labelMetrics{labelFont};
 
@@ -316,6 +338,16 @@ void BigStat::paintEvent(QPaintEvent* /*event*/)
     painter.setPen(colours.text);
     painter.drawText(QRectF{0, 0, static_cast<qreal>(width()), valueMetrics.height()}, Qt::AlignLeft | Qt::AlignVCenter,
                      valueMetrics.elidedText(m_value, Qt::ElideRight, width()));
+
+    if(m_delta) {
+        const int percent = static_cast<int>(std::lround(*m_delta));
+        const QString delta
+            = percent == 0 ? u"0%"_s : u"%1 %2%"_s.arg(percent > 0 ? u"▲"_s : u"▼"_s).arg(std::abs(percent));
+        painter.setFont(labelFont);
+        painter.setPen(percent > 0 ? colours.seriesColour(2)
+                                   : (percent < 0 ? colours.seriesColour(7) : colours.textMuted));
+        painter.drawText(QPointF{valueMetrics.horizontalAdvance(m_value) + 12, valueMetrics.ascent() + 2}, delta);
+    }
 
     painter.setFont(labelFont);
     painter.setPen(colours.textMuted);
@@ -403,8 +435,11 @@ void ShowMoreButton::updateText()
 
 RowListWidget::RowListWidget(QWidget* parent)
     : ChartWidget{parent}
+    , m_art{nullptr}
+    , m_textScale{1.0}
     , m_showRank{true}
     , m_rowHeight{0}
+    , m_artSize{0}
 { }
 
 void RowListWidget::setRows(std::vector<Row> rows, bool showRank)
@@ -422,11 +457,43 @@ void RowListWidget::setRowHeight(int height)
     updateGeometry();
 }
 
+void RowListWidget::setArt(StatsArt* art, int size)
+{
+    if(m_art) {
+        m_art->disconnect(this);
+    }
+
+    m_art     = art;
+    m_artSize = size;
+    if(m_art) {
+        QObject::connect(m_art, &StatsArt::coversChanged, this, qOverload<>(&QWidget::update));
+    }
+    updateGeometry();
+    update();
+}
+
+void RowListWidget::setTextScale(qreal scale)
+{
+    m_textScale = scale;
+    updateGeometry();
+    update();
+}
+
+int RowListWidget::effectiveRowHeight() const
+{
+    if(m_rowHeight > 0) {
+        return m_rowHeight;
+    }
+    if(m_art && m_artSize > 0) {
+        return m_artSize + 14;
+    }
+    return QFontMetrics{scaled(font(), m_textScale)}.height() + QFontMetrics{scaled(smallFont(), m_textScale)}.height()
+         + 16;
+}
+
 QSize RowListWidget::sizeHint() const
 {
-    const int rowHeight
-        = m_rowHeight > 0 ? m_rowHeight : QFontMetrics{font()}.height() + QFontMetrics{smallFont()}.height() + 16;
-    return {300, rowHeight * static_cast<int>(m_rows.size())};
+    return {300, effectiveRowHeight() * static_cast<int>(m_rows.size())};
 }
 
 QSize RowListWidget::minimumSizeHint() const
@@ -440,8 +507,7 @@ int RowListWidget::hitTest(const QPoint& pos) const
         return -1;
     }
 
-    const int rowHeight = sizeHint().height() / static_cast<int>(m_rows.size());
-    const int row       = pos.y() / rowHeight;
+    const int row = pos.y() / effectiveRowHeight();
     return row < static_cast<int>(m_rows.size()) ? row : -1;
 }
 
@@ -459,12 +525,13 @@ void RowListWidget::paintEvent(QPaintEvent* /*event*/)
 
     QPainter painter{this};
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
-    const QFont titleFont = font();
-    const QFont smaller   = smallFont();
+    const QFont titleFont = scaled(font(), m_textScale);
+    const QFont smaller   = scaled(smallFont(), m_textScale);
     const QFontMetricsF titleMetrics{titleFont};
     const QFontMetricsF smallMetrics{smaller};
-    const qreal rowHeight = static_cast<qreal>(sizeHint().height()) / static_cast<qreal>(m_rows.size());
+    const qreal rowHeight = effectiveRowHeight();
 
     QFont valueFont = titleFont;
     valueFont.setBold(true);
@@ -476,8 +543,10 @@ void RowListWidget::paintEvent(QPaintEvent* /*event*/)
             {rightWidth, valueMetrics.horizontalAdvance(row.value), smallMetrics.horizontalAdvance(row.trailing)});
     }
 
-    const qreal rankWidth = m_showRank ? titleMetrics.horizontalAdvance(QString::number(m_rows.size())) + 16 : 0;
-    const qreal textLeft  = 8 + rankWidth;
+    const bool showArt    = m_art && m_artSize > 0;
+    const qreal rankWidth = m_showRank ? titleMetrics.horizontalAdvance(QString::number(m_rows.size())) + 18 : 0;
+    const qreal artLeft   = 8 + rankWidth;
+    const qreal textLeft  = artLeft + (showArt ? m_artSize + 14 : 0);
     const qreal textWidth = std::max(0.0, width() - textLeft - rightWidth - 20);
 
     for(size_t i{0}; i < m_rows.size(); ++i) {
@@ -487,7 +556,7 @@ void RowListWidget::paintEvent(QPaintEvent* /*event*/)
         if(static_cast<int>(i) == hovered()) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(Colours::mix(colours().text, colours().card, 0.07));
-            painter.drawRoundedRect(bounds, 6, 6);
+            painter.drawRoundedRect(bounds, 8, 8);
         }
 
         if(m_showRank) {
@@ -495,6 +564,17 @@ void RowListWidget::paintEvent(QPaintEvent* /*event*/)
             painter.setPen(colours().textMuted);
             painter.drawText(QRectF{8, bounds.top(), rankWidth - 8, bounds.height()}, Qt::AlignLeft | Qt::AlignVCenter,
                              QString::number(i + 1));
+        }
+
+        if(showArt) {
+            const QRectF cover{artLeft, bounds.top() + (bounds.height() - m_artSize) / 2, static_cast<qreal>(m_artSize),
+                               static_cast<qreal>(m_artSize)};
+            QPainterPath clip;
+            clip.addRoundedRect(cover, std::min(12.0, m_artSize * 0.16), std::min(12.0, m_artSize * 0.16));
+            painter.save();
+            painter.setClipPath(clip);
+            painter.drawPixmap(cover.toRect(), m_art->cover(row.hash, m_artSize, devicePixelRatioF()));
+            painter.restore();
         }
 
         const bool hasSubtitle  = !row.subtitle.isEmpty();
@@ -533,27 +613,322 @@ void RowListWidget::paintEvent(QPaintEvent* /*event*/)
     }
 }
 
+HeroCover::HeroCover(QString hash, StatsArt* art, int maxSide, QWidget* parent)
+    : QWidget{parent}
+    , m_hash{std::move(hash)}
+    , m_art{art}
+    , m_maxSide{maxSide}
+{
+    QSizePolicy policy{QSizePolicy::Expanding, QSizePolicy::Minimum};
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
+
+    if(m_art) {
+        QObject::connect(m_art, &StatsArt::coversChanged, this, qOverload<>(&QWidget::update));
+    }
+}
+
+QSize HeroCover::sizeHint() const
+{
+    return {m_maxSide, m_maxSide};
+}
+
+bool HeroCover::hasHeightForWidth() const
+{
+    return true;
+}
+
+int HeroCover::heightForWidth(int width) const
+{
+    return std::min(width, m_maxSide);
+}
+
+void HeroCover::paintEvent(QPaintEvent* /*event*/)
+{
+    if(!m_art) {
+        return;
+    }
+
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+    const int side = std::min({width(), height(), m_maxSide});
+    const QRectF cover{(width() - side) / 2.0, 0, static_cast<qreal>(side), static_cast<qreal>(side)};
+
+    QPainterPath clip;
+    clip.addRoundedRect(cover, side * 0.09, side * 0.09);
+    painter.setClipPath(clip);
+    painter.drawPixmap(cover.toRect(), m_art->cover(m_hash, side, devicePixelRatioF()));
+}
+
+MonthCell::MonthCell(QString month, QString title, QString detail, QString hash, StatsArt* art, QWidget* parent)
+    : QWidget{parent}
+    , m_month{std::move(month)}
+    , m_title{std::move(title)}
+    , m_detail{std::move(detail)}
+    , m_hash{std::move(hash)}
+    , m_art{art}
+{
+    QSizePolicy policy{QSizePolicy::Expanding, QSizePolicy::Minimum};
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
+    // Twelve of these make a tall card, so don't let them grow with a wide one
+    setMaximumWidth(122);
+
+    if(m_art) {
+        QObject::connect(m_art, &StatsArt::coversChanged, this, qOverload<>(&QWidget::update));
+    }
+}
+
+int MonthCell::textHeight() const
+{
+    return QFontMetrics{scaled(font(), 1.0, true)}.height() + QFontMetrics{scaled(font(), 0.9)}.height() + 8;
+}
+
+QSize MonthCell::sizeHint() const
+{
+    return {120, heightForWidth(120)};
+}
+
+bool MonthCell::hasHeightForWidth() const
+{
+    return true;
+}
+
+int MonthCell::heightForWidth(int width) const
+{
+    // The cell is drawn no wider than its maximum, whatever width the layout offers
+    return std::min(width, maximumWidth()) + textHeight();
+}
+
+void MonthCell::paintEvent(QPaintEvent* /*event*/)
+{
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+    const auto colours = Colours::fromPalette(palette());
+    const int side     = std::min(width(), maximumWidth());
+    const QRectF cover{0, 0, static_cast<qreal>(side), static_cast<qreal>(side)};
+    const qreal radius = std::min(18.0, side * 0.14);
+
+    QPainterPath clip;
+    clip.addRoundedRect(cover, radius, radius);
+    if(m_hash.isEmpty() || !m_art) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(withAlpha(colours.text, 14));
+        painter.drawPath(clip);
+    }
+    else {
+        painter.save();
+        painter.setClipPath(clip);
+        painter.drawPixmap(cover.toRect(), m_art->cover(m_hash, side, devicePixelRatioF()));
+        painter.restore();
+    }
+
+    // The month on a badge in the corner of the cover
+    const QFont badgeFont = scaled(font(), 0.85, true);
+    const QFontMetricsF badgeMetrics{badgeFont};
+    const qreal badgeWidth  = badgeMetrics.horizontalAdvance(m_month) + 16;
+    const qreal badgeHeight = badgeMetrics.height() + 6;
+    const QRectF badge{8, 8, badgeWidth, badgeHeight};
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor{0, 0, 0, 175});
+    painter.drawRoundedRect(badge, badgeHeight / 2, badgeHeight / 2);
+    painter.setFont(badgeFont);
+    painter.setPen(QColor{255, 255, 255, 235});
+    painter.drawText(badge, Qt::AlignCenter, m_month);
+
+    // The track beneath, or just the month when there's nothing for it
+    const QFont titleFont  = scaled(font(), 1.0, true);
+    const QFont detailFont = scaled(font(), 0.9);
+    const QFontMetricsF titleMetrics{titleFont};
+    const QFontMetricsF detailMetrics{detailFont};
+
+    painter.setFont(titleFont);
+    painter.setPen(colours.text);
+    painter.drawText(QRectF{2, side + 6.0, side - 4.0, titleMetrics.height()}, Qt::AlignLeft | Qt::AlignVCenter,
+                     titleMetrics.elidedText(m_hash.isEmpty() ? m_month : m_title, Qt::ElideRight, side - 4));
+
+    if(!m_detail.isEmpty()) {
+        painter.setFont(detailFont);
+        painter.setPen(colours.textMuted);
+        painter.drawText(QRectF{2, side + 6.0 + titleMetrics.height(), side - 4.0, detailMetrics.height()},
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         detailMetrics.elidedText(m_detail, Qt::ElideRight, side - 4));
+    }
+}
+
+PillLabel::PillLabel(QString name, QString count, QWidget* parent)
+    : QWidget{parent}
+    , m_name{std::move(name)}
+    , m_count{std::move(count)}
+{
+    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+}
+
+QSize PillLabel::sizeHint() const
+{
+    const QFontMetrics name{scaled(font(), 1.0, true)};
+    const QFontMetrics count{scaled(font(), 0.9)};
+    return {name.horizontalAdvance(m_name) + count.horizontalAdvance(m_count) + 44, name.height() + 16};
+}
+
+void PillLabel::paintEvent(QPaintEvent* /*event*/)
+{
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const auto colours = Colours::fromPalette(palette());
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(withAlpha(colours.text, 20));
+    painter.drawRoundedRect(rect(), height() / 2.0, height() / 2.0);
+
+    const QFont nameFont  = scaled(font(), 1.0, true);
+    const QFont countFont = scaled(font(), 0.9);
+    const QFontMetricsF nameMetrics{nameFont};
+    const QFontMetricsF countMetrics{countFont};
+
+    painter.setFont(nameFont);
+    painter.setPen(colours.text);
+    painter.drawText(QRectF{16, 0, nameMetrics.horizontalAdvance(m_name) + 2, static_cast<qreal>(height())},
+                     Qt::AlignVCenter | Qt::AlignLeft, m_name);
+
+    painter.setFont(countFont);
+    painter.setPen(colours.textMuted);
+    painter.drawText(QRectF{16 + nameMetrics.horizontalAdvance(m_name) + 10, 0,
+                            countMetrics.horizontalAdvance(m_count) + 2, static_cast<qreal>(height())},
+                     Qt::AlignVCenter | Qt::AlignLeft, m_count);
+}
+
+FlowLayout::FlowLayout(QWidget* parent, int spacing)
+    : QLayout{parent}
+    , m_spacing{spacing}
+{
+    setContentsMargins(0, 0, 0, 0);
+}
+
+FlowLayout::~FlowLayout()
+{
+    while(QLayoutItem* item = takeAt(0)) {
+        delete item;
+    }
+}
+
+void FlowLayout::addItem(QLayoutItem* item)
+{
+    m_items.append(item);
+}
+
+int FlowLayout::count() const
+{
+    return static_cast<int>(m_items.size());
+}
+
+QLayoutItem* FlowLayout::itemAt(int index) const
+{
+    return m_items.value(index);
+}
+
+QLayoutItem* FlowLayout::takeAt(int index)
+{
+    return index >= 0 && index < m_items.size() ? m_items.takeAt(index) : nullptr;
+}
+
+Qt::Orientations FlowLayout::expandingDirections() const
+{
+    return {};
+}
+
+bool FlowLayout::hasHeightForWidth() const
+{
+    return true;
+}
+
+int FlowLayout::heightForWidth(int width) const
+{
+    return layoutItems(QRect{0, 0, width, 0}, false);
+}
+
+void FlowLayout::setGeometry(const QRect& rect)
+{
+    QLayout::setGeometry(rect);
+    layoutItems(rect, true);
+}
+
+QSize FlowLayout::sizeHint() const
+{
+    return minimumSize();
+}
+
+QSize FlowLayout::minimumSize() const
+{
+    QSize size;
+    for(const QLayoutItem* item : m_items) {
+        size = size.expandedTo(item->minimumSize());
+    }
+
+    const QMargins margins = contentsMargins();
+    return size + QSize{margins.left() + margins.right(), margins.top() + margins.bottom()};
+}
+
+int FlowLayout::layoutItems(const QRect& rect, bool apply) const
+{
+    const QMargins margins = contentsMargins();
+    const QRect inner      = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom());
+
+    int x{inner.x()};
+    int y{inner.y()};
+    int rowHeight{0};
+    for(QLayoutItem* item : m_items) {
+        const QSize size = item->sizeHint();
+        if(x + size.width() > inner.right() + 1 && rowHeight > 0) {
+            x = inner.x();
+            y += rowHeight + m_spacing;
+            rowHeight = 0;
+        }
+        if(apply) {
+            item->setGeometry(QRect{QPoint{x, y}, size});
+        }
+        x += size.width() + m_spacing;
+        rowHeight = std::max(rowHeight, size.height());
+    }
+    return y + rowHeight - rect.y() + margins.bottom();
+}
+
 StoryCard::StoryCard(QWidget* parent)
     : QWidget{parent}
+    , m_year{0}
+    , m_months{}
 {
-    setTint(QColor::fromHsv(210, 150, 120));
+    setTint(QColor::fromHsv(210, 140, 220));
 }
 
 void StoryCard::setTint(const QColor& tint)
 {
-    m_tint = tint;
+    // A near black card with the faintest hint of the tint, the tint itself being kept for the charts
+    const int hue        = tint.hsvHue() >= 0 ? tint.hsvHue() : 210;
+    const int saturation = std::clamp(tint.hsvSaturation(), 90, 215);
+    m_background         = QColor::fromHsv(hue, saturation / 2, 26);
+    const QColor accent  = QColor::fromHsv(hue, std::min(saturation, 150), 245);
+    const QColor text{236, 236, 240};
 
-    // Everything on the card is light on a dark background, whatever the theme, so give it a palette to match.
-    // Widgets on the card draw with these colours.
-    const QColor text{255, 255, 255};
     QPalette cardPalette = palette();
-    cardPalette.setColor(QPalette::Window, tint);
-    cardPalette.setColor(QPalette::Base, tint);
+    cardPalette.setColor(QPalette::Window, m_background);
+    cardPalette.setColor(QPalette::Base, m_background);
     cardPalette.setColor(QPalette::WindowText, text);
     cardPalette.setColor(QPalette::Text, text);
     cardPalette.setColor(QPalette::ButtonText, text);
-    cardPalette.setColor(QPalette::Highlight, Colours::mix(text, tint, 0.85));
+    cardPalette.setColor(QPalette::Highlight, accent);
     setPalette(cardPalette);
+    update();
+}
+
+void StoryCard::setBadge(int year, const std::array<int, 12>& months)
+{
+    m_year   = year;
+    m_months = months;
     update();
 }
 
@@ -562,13 +937,80 @@ void StoryCard::paintEvent(QPaintEvent* /*event*/)
     QPainter painter{this};
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QLinearGradient gradient{0, 0, 0, static_cast<qreal>(height())};
-    gradient.setColorAt(0, m_tint.lighter(125));
-    gradient.setColorAt(1, m_tint.darker(150));
+    QPainterPath shape;
+    shape.addRoundedRect(QRectF{rect()}, 28, 28);
+    painter.setClipPath(shape);
+    painter.fillPath(shape, m_background);
 
+    // Two large faint circles behind the content
     painter.setPen(Qt::NoPen);
-    painter.setBrush(gradient);
-    painter.drawRoundedRect(rect(), 20, 20);
+    painter.setBrush(QColor{255, 255, 255, 9});
+    painter.drawEllipse(QPointF{width() * 0.95, height() * 0.07}, width() * 0.5, width() * 0.5);
+    painter.drawEllipse(QPointF{width() * 0.0, height() * 0.97}, width() * 0.36, width() * 0.36);
+
+    paintBadge(painter);
+}
+
+void StoryCard::paintBadge(QPainter& painter) const
+{
+    if(m_year <= 0) {
+        return;
+    }
+
+    constexpr qreal badgeWidth  = 186;
+    constexpr qreal badgeHeight = 50;
+    const QRectF badge{width() - badgeWidth - 22.0, height() - badgeHeight - 22.0, badgeWidth, badgeHeight};
+
+    // A ticket: the icon, a perforated line with notches, the year and a sparkline of the year
+    constexpr qreal divider = 58;
+    QPainterPath ticket;
+    ticket.addRoundedRect(badge, 14, 14);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor{255, 255, 255, 20});
+    painter.drawPath(ticket);
+
+    painter.setBrush(m_background);
+    painter.drawEllipse(QPointF{badge.left() + divider, badge.top()}, 7, 7);
+    painter.drawEllipse(QPointF{badge.left() + divider, badge.bottom()}, 7, 7);
+
+    QPen dashes{QColor{255, 255, 255, 60}, 1.5};
+    dashes.setStyle(Qt::CustomDashLine);
+    dashes.setDashPattern({2.0, 3.0});
+    painter.setPen(dashes);
+    painter.drawLine(QPointF{badge.left() + divider, badge.top() + 10},
+                     QPointF{badge.left() + divider, badge.bottom() - 10});
+
+    const QPixmap icon = Gui::applicationIcon().pixmap(QSize{28, 28}, devicePixelRatioF());
+    painter.drawPixmap(QPointF{badge.left() + (divider - 28) / 2, badge.center().y() - 14}, icon);
+
+    QFont brand = font();
+    brand.setPointSizeF(brand.pointSizeF() * 0.7);
+    brand.setBold(true);
+    brand.setLetterSpacing(QFont::AbsoluteSpacing, 1.4);
+    QFont year = font();
+    year.setBold(true);
+    year.setPointSizeF(year.pointSizeF() * 1.35);
+
+    const qreal textLeft = badge.left() + divider + 12;
+    painter.setFont(brand);
+    painter.setPen(QColor{255, 255, 255, 140});
+    painter.drawText(QPointF{textLeft, badge.top() + 20}, u"FOOYIN"_s);
+    painter.setFont(year);
+    painter.setPen(QColor{255, 255, 255, 235});
+    painter.drawText(QPointF{textLeft, badge.bottom() - 9}, QString::number(m_year));
+
+    const int maxMonth       = std::max(1, *std::ranges::max_element(m_months));
+    constexpr qreal barWidth = 3;
+    constexpr qreal barGap   = 2;
+    const qreal sparkLeft    = badge.right() - 14 - 12 * barWidth - 11 * barGap;
+    painter.setPen(Qt::NoPen);
+    for(size_t i{0}; i < m_months.size(); ++i) {
+        const qreal height = std::max(3.0, 24.0 * m_months[i] / maxMonth);
+        painter.setBrush(QColor{255, 255, 255, m_months[i] == maxMonth ? 190 : 85});
+        painter.drawRoundedRect(QRectF{sparkLeft + static_cast<qreal>(i) * (barWidth + barGap),
+                                       badge.center().y() + 12 - height, barWidth, height},
+                                1.5, 1.5);
+    }
 }
 
 PageDots::PageDots(QWidget* parent)

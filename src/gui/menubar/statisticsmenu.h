@@ -25,6 +25,7 @@
 namespace Fooyin {
 class ActionManager;
 class Application;
+class CoverRepository;
 class StatisticsDialog;
 class StatisticsService;
 class YearInReviewDialog;
@@ -34,7 +35,7 @@ class StatisticsMenu : public QObject
     Q_OBJECT
 
 public:
-    StatisticsMenu(Application* core, ActionManager* actionManager, QObject* parent = nullptr);
+    StatisticsMenu(Application* core, ActionManager* actionManager, CoverRepository* covers, QObject* parent = nullptr);
 
     //! Opens the year in review for @p year, or the latest year when it's 0.
     void showYearInReview(int year = 0);

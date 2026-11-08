@@ -424,6 +424,7 @@ void VerticalBarsChart::paintEvent(QPaintEvent* /*event*/)
 RankBarsChart::RankBarsChart(QWidget* parent)
     : ChartWidget{parent}
     , m_rowHeight{28}
+    , m_pill{false}
 { }
 
 void RankBarsChart::setData(std::vector<ChartData> points)
@@ -443,6 +444,12 @@ void RankBarsChart::setRowHeight(int height)
 void RankBarsChart::setClickable(bool clickable)
 {
     setClickableItems(clickable);
+}
+
+void RankBarsChart::setPillStyle(bool pill)
+{
+    m_pill = pill;
+    update();
 }
 
 QSize RankBarsChart::sizeHint() const
@@ -499,6 +506,54 @@ void RankBarsChart::paintEvent(QPaintEvent* /*event*/)
         maxValue    = std::max(maxValue, points.value);
     }
 
+    if(m_pill) {
+        const qreal rankWidth  = metrics.horizontalAdvance(QString::number(m_data.size())) + 16;
+        const qreal nameWidth  = std::min(widestLabel + 8, width() * 0.34);
+        const qreal trackLeft  = rankWidth + nameWidth + 4;
+        const qreal trackRight = width() - widestValue - 14;
+        const qreal trackWidth = std::max(0.0, trackRight - trackLeft);
+        const qreal pillHeight = std::min<qreal>(22, m_rowHeight - 12);
+
+        for(size_t i{0}; i < m_data.size(); ++i) {
+            const auto& points = m_data[i];
+            const QRectF row{0, static_cast<qreal>(i) * m_rowHeight, static_cast<qreal>(width()),
+                             static_cast<qreal>(m_rowHeight)};
+            const bool isHot = static_cast<int>(i) == hovered();
+
+            if(isHot) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(withAlpha(colours().text, 14));
+                painter.drawRoundedRect(row, 8, 8);
+            }
+
+            painter.setPen(colours().textMuted);
+            painter.drawText(QRectF{6, row.top(), rankWidth - 6, row.height()}, Qt::AlignVCenter | Qt::AlignLeft,
+                             QString::number(i + 1));
+            painter.setPen(colours().text);
+            painter.drawText(QRectF{rankWidth, row.top(), nameWidth - 8, row.height()},
+                             Qt::AlignVCenter | Qt::AlignLeft,
+                             metrics.elidedText(points.label, Qt::ElideRight, nameWidth - 8));
+
+            const QRectF track{trackLeft, row.center().y() - pillHeight / 2, trackWidth, pillHeight};
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(withAlpha(colours().text, 20));
+            painter.drawRoundedRect(track, pillHeight / 2, pillHeight / 2);
+
+            const double fraction = static_cast<double>(points.value) / maxValue;
+            if(points.value > 0) {
+                const qreal barW = std::max(pillHeight, trackWidth * fraction * reveal());
+                painter.setBrush(colours().ramp(0.45 + 0.55 * fraction));
+                painter.drawRoundedRect(QRectF{track.left(), track.top(), barW, pillHeight}, pillHeight / 2,
+                                        pillHeight / 2);
+            }
+
+            painter.setPen(colours().text);
+            painter.drawText(QRectF{trackRight + 8, row.top(), widestValue + 6, row.height()},
+                             Qt::AlignVCenter | Qt::AlignRight, locale.toString(points.value));
+        }
+        return;
+    }
+
     const qreal labelWidth = std::min(widestLabel + 8, width() * 0.38);
     const qreal barLeft    = labelWidth + 12;
     const qreal barMax     = std::max(0.0, width() - barLeft - widestValue - 12);
@@ -538,6 +593,7 @@ DonutChart::DonutChart(QWidget* parent)
     : ChartWidget{parent}
     , m_other{0}
     , m_ringSize{150}
+    , m_showValues{true}
 { }
 
 void DonutChart::setData(std::vector<ChartData> points, int other)
@@ -562,6 +618,12 @@ void DonutChart::setRingSize(int size)
     updateGeometry();
 }
 
+void DonutChart::setShowValues(bool show)
+{
+    m_showValues = show;
+    update();
+}
+
 void DonutChart::rebuildSegments()
 {
     m_segments.clear();
@@ -572,7 +634,7 @@ void DonutChart::rebuildSegments()
         }
     }
     if(m_other > 0) {
-        m_segments.push_back({tr("Other"), m_other, colours().other});
+        m_segments.push_back({tr("Others"), m_other, colours().other});
     }
 }
 
@@ -730,10 +792,12 @@ void DonutChart::paintEvent(QPaintEvent* /*event*/)
     const QLocale locale;
 
     qreal valueWidth{0};
-    for(const auto& segment : m_segments) {
-        valueWidth = std::max(valueWidth, metrics.horizontalAdvance(locale.toString(segment.value)));
+    if(m_showValues) {
+        for(const auto& segment : m_segments) {
+            valueWidth = std::max(valueWidth, metrics.horizontalAdvance(locale.toString(segment.value)));
+        }
     }
-    constexpr qreal shareWidth = 44;
+    const qreal shareWidth = metrics.horizontalAdvance(u"100.0%"_s) + 6;
 
     painter.setFont(font());
     for(size_t i{0}; i < m_segments.size(); ++i) {
@@ -751,18 +815,21 @@ void DonutChart::paintEvent(QPaintEvent* /*event*/)
         painter.drawEllipse(QPointF{row.left() + 10, row.center().y()}, 4.5, 4.5);
 
         const qreal textLeft = row.left() + 22;
-        const qreal textMax  = std::max(0.0, row.right() - shareWidth - valueWidth - 16 - textLeft);
+        const qreal textMax = std::max(0.0, row.right() - shareWidth - valueWidth - (m_showValues ? 16 : 8) - textLeft);
 
         painter.setPen(colours().text);
         painter.drawText(QRectF{textLeft, row.top(), textMax, row.height()}, Qt::AlignVCenter | Qt::AlignLeft,
                          metrics.elidedText(segment.label, Qt::ElideRight, textMax));
 
         painter.setPen(colours().textMuted);
-        painter.drawText(QRectF{row.right() - shareWidth - valueWidth - 10, row.top(), valueWidth, row.height()},
-                         Qt::AlignVCenter | Qt::AlignRight, locale.toString(segment.value));
+        if(m_showValues) {
+            painter.drawText(QRectF{row.right() - shareWidth - valueWidth - 10, row.top(), valueWidth, row.height()},
+                             Qt::AlignVCenter | Qt::AlignRight, locale.toString(segment.value));
+        }
+        painter.setPen(m_showValues ? colours().textMuted : colours().text);
         painter.drawText(QRectF{row.right() - shareWidth - 4, row.top(), shareWidth, row.height()},
                          Qt::AlignVCenter | Qt::AlignRight,
-                         locale.toString(100.0 * segment.value / sum, 'f', 0) + u"%"_s);
+                         locale.toString(100.0 * segment.value / sum, 'f', 1) + u"%"_s);
     }
 }
 
@@ -827,12 +894,17 @@ void GaugeChart::paintEvent(QPaintEvent* /*event*/)
 ListeningClockChart::ListeningClockChart(QWidget* parent)
     : ChartWidget{parent}
     , m_hours{}
-    , m_size{200}
+    , m_size{220}
+    , m_peak{-1}
 { }
 
 void ListeningClockChart::setData(const std::array<int, 24>& hours)
 {
     m_hours = hours;
+
+    const auto peak = std::ranges::max_element(m_hours);
+    m_peak          = *peak > 0 ? static_cast<int>(peak - m_hours.begin()) : -1;
+
     setHovered(-1);
     restartReveal();
 }
@@ -855,13 +927,14 @@ QPointF ListeningClockChart::centre() const
 
 qreal ListeningClockChart::radius() const
 {
-    return std::min(width(), height()) / 2.0 - 4;
+    // Leaves room around the face for the hours at the quarters
+    return std::min(width(), height()) / 2.0 - 24;
 }
 
 int ListeningClockChart::hitTest(const QPoint& pos) const
 {
     const qreal distance = std::hypot(pos.x() - centre().x(), pos.y() - centre().y());
-    if(distance < radius() * 0.3 || distance > radius()) {
+    if(distance < radius() * 0.5 || distance > radius()) {
         return -1;
     }
     return std::min(23, static_cast<int>(clockAngle(centre(), pos) / 15.0));
@@ -881,16 +954,19 @@ void ListeningClockChart::paintEvent(QPaintEvent* /*event*/)
 
     const QPointF middle = centre();
     const qreal outer    = radius();
-    const qreal inner    = outer * 0.38;
+    const qreal inner    = outer * 0.5;
     const int maxValue   = std::max(1, *std::ranges::max_element(m_hours));
 
-    // Faint rings to read the hours against
-    painter.setBrush(Qt::NoBrush);
-    painter.setPen(QPen{colours().grid, 1});
-    painter.drawEllipse(middle, inner, inner);
+    // The face, with a hole in the middle for the time
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(withAlpha(colours().text, 16));
     painter.drawEllipse(middle, outer, outer);
+    painter.setBrush(colours().card);
+    painter.drawEllipse(middle, inner, inner);
 
-    const qreal barWidth = std::max(2.0, 2 * std::numbers::pi * inner / 24 * 0.7);
+    // One wedge per hour, starting at the top and running clockwise, as long as its share of the busiest hour
+    constexpr double gap = 2.4;
+    const QRectF innerRect{middle.x() - inner, middle.y() - inner, inner * 2, inner * 2};
     for(int hour{0}; hour < 24; ++hour) {
         const int value = m_hours[static_cast<size_t>(hour)];
         if(value <= 0) {
@@ -898,30 +974,53 @@ void ListeningClockChart::paintEvent(QPaintEvent* /*event*/)
         }
 
         const qreal fraction = static_cast<qreal>(value) / maxValue;
-        const qreal length   = std::max(2.0, (outer - inner - 2) * fraction * reveal());
-        const double angle   = (hour + 0.5) * 15.0 * std::numbers::pi / 180.0;
-        const QPointF from{middle.x() + inner * std::sin(angle), middle.y() - inner * std::cos(angle)};
-        const QPointF to{middle.x() + (inner + length) * std::sin(angle),
-                         middle.y() - (inner + length) * std::cos(angle)};
+        const qreal reach    = inner + std::max(3.0, (outer - inner - 3) * fraction * reveal());
+        const QRectF outerRect{middle.x() - reach, middle.y() - reach, reach * 2, reach * 2};
 
-        QColor colour = colours().ramp(0.35 + 0.65 * fraction);
+        const double start = 90.0 - (hour * 15.0 + gap / 2);
+        const double sweep = -(15.0 - gap);
+
+        QPainterPath wedge;
+        wedge.arcMoveTo(outerRect, start);
+        wedge.arcTo(outerRect, start, sweep);
+        wedge.arcTo(innerRect, start + sweep, -sweep);
+        wedge.closeSubpath();
+
+        QColor colour = hour == m_peak ? colours().accent : colours().ramp(0.3 + 0.55 * fraction);
         if(hour == hovered()) {
-            colour = colour.lighter(120);
+            colour = colour.lighter(125);
         }
-
-        QPen pen{colour, barWidth};
-        pen.setCapStyle(Qt::FlatCap);
-        painter.setPen(pen);
-        painter.drawLine(from, to);
+        painter.setBrush(colour);
+        painter.drawPath(wedge);
     }
 
-    // Hours at the quarters sit inside the hole
+    // The hours at the quarters sit outside the face
     painter.setFont(smallFont());
     painter.setPen(colours().textMuted);
     for(const int hour : {0, 6, 12, 18}) {
-        const double angle = hour * 15.0 * std::numbers::pi / 180.0;
-        const QPointF at{middle.x() + inner * 0.68 * std::sin(angle), middle.y() - inner * 0.68 * std::cos(angle)};
-        painter.drawText(QRectF{at.x() - 14, at.y() - 8, 28, 16}, Qt::AlignCenter, QString::number(hour));
+        const double angle   = hour * 15.0 * std::numbers::pi / 180.0;
+        const qreal distance = outer + 13;
+        const QPointF at{middle.x() + distance * std::sin(angle), middle.y() - distance * std::cos(angle)};
+        painter.drawText(QRectF{at.x() - 14, at.y() - 8, 28, 16}, Qt::AlignCenter,
+                         u"%1"_s.arg(hour, 2, 10, QLatin1Char{'0'}));
+    }
+
+    // The time in the middle is the busiest hour, or the hour under the pointer
+    const int shown = hovered() >= 0 ? hovered() : m_peak;
+    if(shown >= 0) {
+        QFont big = font();
+        big.setBold(true);
+        big.setPointSizeF(big.pointSizeF() * 1.7);
+        painter.setFont(big);
+        painter.setPen(colours().text);
+        painter.drawText(QRectF{middle.x() - inner, middle.y() - inner * 0.62, inner * 2, inner * 0.8},
+                         Qt::AlignHCenter | Qt::AlignBottom, u"%1:00"_s.arg(shown, 2, 10, QLatin1Char{'0'}));
+
+        painter.setFont(smallFont());
+        painter.setPen(colours().textMuted);
+        painter.drawText(QRectF{middle.x() - inner, middle.y() + inner * 0.2, inner * 2, inner * 0.4},
+                         Qt::AlignHCenter | Qt::AlignTop,
+                         hovered() >= 0 ? listensText(m_hours.at(static_cast<size_t>(shown))) : tr("Top"));
     }
 }
 
@@ -1061,6 +1160,7 @@ CalendarHeatmapChart::CalendarHeatmapChart(QWidget* parent)
     : ChartWidget{parent}
     , m_maxValue{0}
     , m_maxCell{13}
+    , m_wrap{true}
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 }
@@ -1083,6 +1183,13 @@ void CalendarHeatmapChart::setMaxCellSize(int size)
     updateGeometry();
 }
 
+void CalendarHeatmapChart::setWrapping(bool wrap)
+{
+    m_wrap = wrap;
+    updateGeometry();
+    update();
+}
+
 CalendarHeatmapChart::Layout CalendarHeatmapChart::layoutFor(int width) const
 {
     Layout layout;
@@ -1098,7 +1205,8 @@ CalendarHeatmapChart::Layout CalendarHeatmapChart::layoutFor(int width) const
     // Weeks wrap on to another row rather than shrinking the cells beyond this
     constexpr qreal minCell = 9;
     constexpr qreal minGap  = 2;
-    const int maxWeeks      = std::max(8, static_cast<int>((width - geo.labelWidth + minGap) / (minCell + minGap)));
+    const int maxWeeks
+        = m_wrap ? std::max(8, static_cast<int>((width - geo.labelWidth + minGap) / (minCell + minGap))) : 100000;
 
     // A year or less is one block, anything longer gets a block per calendar year
     std::vector<std::pair<QDate, QDate>> blocks;
@@ -1319,6 +1427,152 @@ void CalendarHeatmapChart::paintEvent(QPaintEvent* /*event*/)
         }
         painter.setOpacity(1.0);
     }
+}
+
+SmoothCurveChart::SmoothCurveChart(QWidget* parent)
+    : ChartWidget{parent}
+    , m_plotHeight{130}
+{ }
+
+void SmoothCurveChart::setData(std::vector<ChartData> points)
+{
+    m_points = std::move(points);
+    setHovered(-1);
+    restartReveal();
+}
+
+void SmoothCurveChart::setPlotHeight(int height)
+{
+    m_plotHeight = height;
+    updateGeometry();
+}
+
+QSize SmoothCurveChart::sizeHint() const
+{
+    return {300, m_plotHeight + 36};
+}
+
+QSize SmoothCurveChart::minimumSizeHint() const
+{
+    return {120, m_plotHeight + 36};
+}
+
+QRectF SmoothCurveChart::plotRect() const
+{
+    // Space above for the label of the highest point
+    return QRectF{10, 28, std::max(1.0, width() - 20.0), static_cast<qreal>(height() - 28 - 8)};
+}
+
+QPointF SmoothCurveChart::pointAt(size_t index, const QRectF& plot, int maxValue) const
+{
+    const qreal step = m_points.size() > 1 ? plot.width() / static_cast<qreal>(m_points.size() - 1) : 0.0;
+    return {plot.left() + step * static_cast<qreal>(index),
+            plot.bottom() - plot.height() * m_points[index].value / std::max(1, maxValue)};
+}
+
+int SmoothCurveChart::hitTest(const QPoint& pos) const
+{
+    if(m_points.empty()) {
+        return -1;
+    }
+
+    const QRectF plot = plotRect();
+    if(m_points.size() == 1) {
+        return 0;
+    }
+    const double fraction = std::clamp((pos.x() - plot.left()) / plot.width(), 0.0, 1.0);
+    return static_cast<int>(std::lround(fraction * static_cast<double>(m_points.size() - 1)));
+}
+
+QString SmoothCurveChart::tipFor(int item, const QPoint& /*pos*/) const
+{
+    const auto& point = m_points.at(static_cast<size_t>(item));
+    return u"%1\n%2"_s.arg(point.label, listensText(point.value));
+}
+
+void SmoothCurveChart::paintEvent(QPaintEvent* /*event*/)
+{
+    if(m_points.empty()) {
+        return;
+    }
+
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const QRectF plot  = plotRect();
+    const int maxValue = std::max(1, std::ranges::max_element(m_points, {}, &ChartData::value)->value);
+    const auto peak = static_cast<size_t>(std::ranges::max_element(m_points, {}, &ChartData::value) - m_points.begin());
+
+    std::vector<QPointF> points;
+    for(size_t i{0}; i < m_points.size(); ++i) {
+        points.push_back(pointAt(i, plot, maxValue));
+    }
+
+    // Monotone cubic interpolation, so the curve is smooth without dipping below the baseline or overshooting a peak
+    const size_t count = points.size();
+    std::vector<double> tangents(count, 0.0);
+    if(count > 1) {
+        std::vector<double> slopes;
+        slopes.reserve(count);
+        for(size_t i{0}; i + 1 < count; ++i) {
+            slopes.push_back((points[i + 1].y() - points[i].y()) / (points[i + 1].x() - points[i].x()));
+        }
+        tangents.front() = slopes.front();
+        tangents.back()  = slopes.back();
+        for(size_t i{1}; i + 1 < count; ++i) {
+            tangents[i] = slopes[i - 1] * slopes[i] <= 0.0 ? 0.0 : (slopes[i - 1] + slopes[i]) / 2.0;
+        }
+        for(size_t i{0}; i + 1 < count; ++i) {
+            if(slopes[i] == 0.0) {
+                tangents[i] = tangents[i + 1] = 0.0;
+                continue;
+            }
+            const double a = tangents[i] / slopes[i];
+            const double b = tangents[i + 1] / slopes[i];
+            if(const double h = std::hypot(a, b); h > 3.0) {
+                tangents[i]     = 3.0 * a / h * slopes[i];
+                tangents[i + 1] = 3.0 * b / h * slopes[i];
+            }
+        }
+    }
+
+    QPainterPath curve;
+    curve.moveTo(points.front());
+    for(size_t i{0}; i + 1 < count; ++i) {
+        const qreal dx = (points[i + 1].x() - points[i].x()) / 3.0;
+        curve.cubicTo(QPointF{points[i].x() + dx, points[i].y() + tangents[i] * dx},
+                      QPointF{points[i + 1].x() - dx, points[i + 1].y() - tangents[i + 1] * dx}, points[i + 1]);
+    }
+
+    painter.save();
+    painter.setClipRect(QRectF{0, 0, plot.left() + plot.width() * reveal() + 6, static_cast<qreal>(height())});
+    QPen pen{colours().accent, 4};
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPath(curve);
+    painter.restore();
+
+    if(reveal() < 1.0) {
+        return;
+    }
+
+    // Only the highest point (or the one under the pointer) is labelled, the rest is in the tooltip
+    const size_t labelled = hovered() >= 0 ? static_cast<size_t>(hovered()) : peak;
+    const QPointF at      = points[labelled];
+
+    painter.setPen(QPen{colours().card, 2});
+    painter.setBrush(colours().accent);
+    painter.drawEllipse(at, 5.0, 5.0);
+
+    const QString text = u"%1 • %2"_s.arg(m_points[labelled].label, QLocale().toString(m_points[labelled].value));
+    painter.setFont(smallFont());
+    const QFontMetricsF metrics{smallFont()};
+    const qreal textWidth = metrics.horizontalAdvance(text);
+    const qreal left      = std::clamp(at.x() - textWidth / 2, 2.0, std::max(2.0, width() - textWidth - 2.0));
+    painter.setPen(colours().text);
+    painter.drawText(QPointF{left, at.y() - 12}, text);
 }
 
 ListensLineChart::ListensLineChart(QWidget* parent)

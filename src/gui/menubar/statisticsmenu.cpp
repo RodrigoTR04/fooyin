@@ -36,9 +36,10 @@
 #include <QMainWindow>
 
 namespace Fooyin {
-StatisticsMenu::StatisticsMenu(Application* core, ActionManager* actionManager, QObject* parent)
+StatisticsMenu::StatisticsMenu(Application* core, ActionManager* actionManager, CoverRepository* covers,
+                               QObject* parent)
     : QObject{parent}
-    , m_service{new StatisticsService(core->playHistory(), core->library(), this)}
+    , m_service{new StatisticsService(core->playHistory(), core->library(), covers, this)}
 {
     auto* statisticsMenu = actionManager->actionContainer(Constants::Menus::Statistics);
 

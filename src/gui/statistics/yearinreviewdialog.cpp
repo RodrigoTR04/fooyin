@@ -20,11 +20,13 @@
 #include "yearinreviewdialog.h"
 
 #include "statisticsservice.h"
+#include "statsart.h"
 #include "statscharts.h"
 #include "statswidgets.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QEvent>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -33,7 +35,6 @@
 #include <QLocale>
 #include <QMenu>
 #include <QPixmap>
-#include <QScrollArea>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStyle>
@@ -49,7 +50,10 @@ namespace {
 using namespace Stats;
 using Category = PlayHistoryStats::Category;
 
-constexpr int CardMaxWidth = 480;
+constexpr int CardMaxWidth   = 480;
+constexpr int CardMinHeight  = 360;
+constexpr int PageMarginSide = 30;
+constexpr int ArtSize        = 62;
 
 QString tr(const char* text)
 {
@@ -71,20 +75,14 @@ QDate dateOf(qint64 timestamp)
     return QDateTime::fromMSecsSinceEpoch(timestamp).date();
 }
 
-//! The contents of a page, which all share the same margins and are centred vertically.
+//! The contents of a page, which all share the same margins and leave room for the badge at the bottom.
 QWidget* newContent(QVBoxLayout*& layout)
 {
     auto* content = new QWidget();
     layout        = new QVBoxLayout(content);
-    layout->setContentsMargins(28, 24, 28, 24);
-    layout->setSpacing(10);
-    layout->addStretch(1);
+    layout->setContentsMargins(PageMarginSide, 30, PageMarginSide, StoryCard::BadgeSpace);
+    layout->setSpacing(12);
     return content;
-}
-
-void finishContent(QVBoxLayout* layout)
-{
-    layout->addStretch(1);
 }
 
 QLabel* titleLabel(const QString& text, QWidget* parent)
@@ -92,7 +90,7 @@ QLabel* titleLabel(const QString& text, QWidget* parent)
     auto* label = new QLabel(text, parent);
     QFont font  = label->font();
     font.setBold(true);
-    font.setPointSizeF(font.pointSizeF() * 1.9);
+    font.setPointSizeF(font.pointSizeF() * 2.1);
     label->setFont(font);
     label->setWordWrap(true);
     return label;
@@ -100,9 +98,15 @@ QLabel* titleLabel(const QString& text, QWidget* parent)
 
 QLabel* subtitleLabel(const QString& text, QWidget* parent)
 {
-    auto* label      = new QLabel(text, parent);
+    auto* label = new QLabel(text, parent);
+
+    QFont font = label->font();
+    font.setBold(true);
+    font.setPointSizeF(font.pointSizeF() * 1.05);
+    label->setFont(font);
+
     QPalette palette = label->palette();
-    palette.setColor(QPalette::WindowText, QColor{255, 255, 255, 175});
+    palette.setColor(QPalette::WindowText, QColor{236, 236, 240, 170});
     label->setPalette(palette);
     label->setWordWrap(true);
     return label;
@@ -117,26 +121,21 @@ QHBoxLayout* statRow(QWidget* first, QWidget* second)
     return row;
 }
 
-QString trackSubtitle(const PlayHistoryStatsTrack& track)
-{
-    if(track.album.isEmpty()) {
-        return track.artist;
-    }
-    return track.artist.isEmpty() ? track.album : track.artist + u" — "_s + track.album;
-}
-
 RowListWidget::Row trackRow(const PlayHistoryStatsTrack& track, const QString& value, const QString& trailing = {})
 {
     return {.title    = track.title.isEmpty() ? tr("Unknown title") : track.title,
-            .subtitle = trackSubtitle(track),
+            .subtitle = track.artist,
             .value    = value,
-            .trailing = trailing};
+            .trailing = trailing,
+            .hash     = track.hash};
 }
 
-RowListWidget* rowList(std::vector<RowListWidget::Row> rows, QWidget* parent, bool showRank = true)
+RowListWidget* rowList(std::vector<RowListWidget::Row> rows, StatsArt* art, QWidget* parent, bool showRank = true)
 {
     auto* list = new RowListWidget(parent);
-    list->setRowHeight(56);
+    list->setArt(art, ArtSize);
+    list->setRowHeight(ArtSize + 18);
+    list->setTextScale(1.1);
     list->setRows(std::move(rows), showRank);
     return list;
 }
@@ -145,6 +144,7 @@ RowListWidget* rowList(std::vector<RowListWidget::Row> rows, QWidget* parent, bo
 YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* parent)
     : QDialog{parent}
     , m_service{service}
+    , m_art{service->art()}
     , m_years{new ChipBar(this)}
     , m_exportButton{new QToolButton(this)}
     , m_card{new StoryCard(this)}
@@ -155,14 +155,10 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     , m_year{0}
     , m_pendingYear{0}
     , m_requestId{0}
-    , m_hue{palette().color(QPalette::Highlight).hue()}
+    , m_cardWidth{0}
 {
     setWindowTitle(tr("Year in review"));
-    resize(560, 840);
-
-    if(m_hue < 0) {
-        m_hue = 210;
-    }
+    resize(580, 940);
 
     auto* layout = new QVBoxLayout(this);
 
@@ -184,10 +180,12 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     cardLayout->setContentsMargins(0, 0, 0, 0);
     cardLayout->addWidget(m_stack);
     m_card->setMaximumWidth(CardMaxWidth);
+    m_card->installEventFilter(this);
 
+    // The card is as tall as its page, and sits in the middle of the room there is
     auto* cardRow = new QHBoxLayout();
     cardRow->addStretch(1);
-    cardRow->addWidget(m_card, 100);
+    cardRow->addWidget(m_card, 100, Qt::AlignVCenter);
     cardRow->addStretch(1);
     layout->addLayout(cardRow, 1);
 
@@ -208,6 +206,7 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     QObject::connect(m_previousButton, &QToolButton::clicked, this,
                      [this]() { goToPage(m_stack->currentIndex() - 1); });
     QObject::connect(m_nextButton, &QToolButton::clicked, this, [this]() { goToPage(m_stack->currentIndex() + 1); });
+    QObject::connect(m_art, &StatsArt::coversChanged, this, &YearInReviewDialog::refreshTint);
 
     loadSummary();
 }
@@ -236,6 +235,16 @@ void YearInReviewDialog::keyPressEvent(QKeyEvent* event)
             break;
     }
     QDialog::keyPressEvent(event);
+}
+
+bool YearInReviewDialog::eventFilter(QObject* watched, QEvent* event)
+{
+    // Pages can be taller or shorter at different widths, so refit when the card's width changes
+    if(watched == m_card && event->type() == QEvent::Resize && m_card->width() != m_cardWidth) {
+        m_cardWidth = m_card->width();
+        updateCardHeight();
+    }
+    return QDialog::eventFilter(watched, event);
 }
 
 void YearInReviewDialog::loadSummary()
@@ -296,10 +305,12 @@ void YearInReviewDialog::showMessage(const QString& message)
     m_dots->setCount(0);
     m_previousButton->setEnabled(false);
     m_nextButton->setEnabled(false);
+    m_card->setBadge(0, {});
+    m_topTrack.clear();
 
-    auto* hint = createEmptyHint(message, m_stack);
-    m_stack->addWidget(hint);
-    m_card->setTint(QColor::fromHsv(m_hue, 140, 125));
+    m_stack->addWidget(createEmptyHint(message, m_stack));
+    m_card->setTint(palette().color(QPalette::Highlight));
+    updateCardHeight();
 }
 
 void YearInReviewDialog::clearPages()
@@ -314,18 +325,8 @@ void YearInReviewDialog::clearPages()
 
 void YearInReviewDialog::addPage(QWidget* content)
 {
-    auto* scroll = new QScrollArea(m_stack);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->viewport()->setAutoFillBackground(false);
-    scroll->setWidget(content);
-    // The card behind is the background
-    content->setAutoFillBackground(false);
-
-    const auto index = static_cast<int>(m_pages.size());
-    m_stack->addWidget(scroll);
-    m_pages.push_back({scroll, QColor::fromHsv((m_hue + index * 24) % 360, 140, 125)});
+    m_stack->addWidget(content);
+    m_pages.push_back(content);
 }
 
 void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
@@ -337,6 +338,10 @@ void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
         showMessage(tr("No listens in %1.").arg(year));
         return;
     }
+
+    m_card->setBadge(year, stats.months);
+    m_topTrack = stats.topTracks.empty() ? QString{} : stats.topTracks.front().hash;
+    refreshTint();
 
     addPage(introPage(year, stats));
     if(!stats.topTracks.empty()) {
@@ -367,6 +372,16 @@ void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
     goToPage(0);
 }
 
+void YearInReviewDialog::refreshTint()
+{
+    // The cover may not have loaded yet, in which case this runs again once it has
+    QColor tint = m_topTrack.isEmpty() ? QColor{} : m_art->dominantColour(m_topTrack);
+    if(!tint.isValid()) {
+        tint = palette().color(QPalette::Highlight);
+    }
+    m_card->setTint(tint);
+}
+
 void YearInReviewDialog::goToPage(int index)
 {
     if(index < 0 || index >= static_cast<int>(m_pages.size())) {
@@ -374,10 +389,25 @@ void YearInReviewDialog::goToPage(int index)
     }
 
     m_stack->setCurrentIndex(index);
-    m_card->setTint(m_pages[static_cast<size_t>(index)].tint);
     m_dots->setCurrent(index);
     m_previousButton->setEnabled(index > 0);
     m_nextButton->setEnabled(index < static_cast<int>(m_pages.size()) - 1);
+    updateCardHeight();
+}
+
+void YearInReviewDialog::updateCardHeight()
+{
+    QWidget* page = m_stack->currentWidget();
+    if(!page) {
+        return;
+    }
+
+    const int width = m_card->width() > 0 ? m_card->width() : CardMaxWidth;
+    int height      = CardMinHeight;
+    if(page->layout()) {
+        height = std::max(height, page->layout()->totalHeightForWidth(width));
+    }
+    m_card->setFixedHeight(height);
 }
 
 QPixmap YearInReviewDialog::grabPage(int index)
@@ -385,7 +415,7 @@ QPixmap YearInReviewDialog::grabPage(int index)
     goToPage(index);
 
     // Charts grow in when first shown, so settle them before taking the picture
-    const auto charts = m_pages.at(static_cast<size_t>(index)).widget->findChildren<ChartWidget*>();
+    const auto charts = m_pages.at(static_cast<size_t>(index))->findChildren<ChartWidget*>();
     for(auto* chart : charts) {
         chart->skipReveal();
     }
@@ -438,19 +468,16 @@ QWidget* YearInReviewDialog::introPage(int year, const PlayHistoryStats& stats)
     for(int month{0}; month < 12; ++month) {
         months.push_back({locale.monthName(month + 1, QLocale::ShortFormat), stats.months[static_cast<size_t>(month)]});
     }
-    auto* chart = new VerticalBarsChart(content);
-    chart->setPlotHeight(100);
-    chart->setData(std::move(months));
-    layout->addWidget(chart);
+    auto* curve = new SmoothCurveChart(content);
+    curve->setPlotHeight(130);
+    curve->setData(std::move(months));
+    layout->addWidget(curve);
     layout->addSpacing(8);
 
-    layout->addLayout(statRow(new BigStat(number(stats.totalListens), tr("Total listens"), content),
-                              new BigStat(formatListenTime(stats.listenSeconds), tr("Total listen time"), content)));
-    layout->addSpacing(8);
-    layout->addLayout(statRow(new BigStat(daysText(stats.daysWithListens), tr("Days"), content),
-                              new BigStat(number(stats.uniqueTracks), tr("Tracks"), content)));
-
-    finishContent(layout);
+    layout->addWidget(new BigStat(number(stats.totalListens), tr("Total listens"), content));
+    layout->addWidget(new BigStat(u"≈ "_s + formatListenTime(stats.listenSeconds), tr("Total listen time"), content));
+    layout->addWidget(new BigStat(daysText(stats.daysWithListens), tr("Days"), content));
+    layout->addWidget(new BigStat(number(stats.uniqueTracks), tr("Tracks"), content));
     return content;
 }
 
@@ -460,15 +487,13 @@ QWidget* YearInReviewDialog::topTracksPage(const PlayHistoryStats& stats)
     auto* content = newContent(layout);
 
     layout->addWidget(titleLabel(tr("Top tracks"), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
     std::vector<RowListWidget::Row> rows;
     for(size_t i{0}; i < std::min<size_t>(5, stats.topTracks.size()); ++i) {
         rows.push_back(trackRow(stats.topTracks[i], number(stats.topTracks[i].count)));
     }
-    layout->addWidget(rowList(std::move(rows), content));
-
-    finishContent(layout);
+    layout->addWidget(rowList(std::move(rows), m_art, content));
     return content;
 }
 
@@ -481,34 +506,33 @@ QWidget* YearInReviewDialog::topArtistsPage(const PlayHistoryStats& stats)
 
     layout->addWidget(titleLabel(tr("Top artists"), content));
     layout->addWidget(subtitleLabel(tr("%1 artists").arg(number(artists.unique)), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
-    std::vector<ChartData> points;
+    std::vector<ChartData> entries;
     for(size_t i{0}; i < std::min<size_t>(8, artists.top.size()); ++i) {
-        points.push_back({artists.top[i].key, artists.top[i].count});
+        entries.push_back({artists.top[i].key, artists.top[i].count});
     }
     auto* chart = new RankBarsChart(content);
-    chart->setRowHeight(32);
-    chart->setData(std::move(points));
+    chart->setPillStyle(true);
+    chart->setRowHeight(42);
+    chart->setData(std::move(entries));
     layout->addWidget(chart);
 
     const auto& albums = stats.category(Category::Album).top;
     const auto& genres = stats.category(Category::Genre).top;
     if(!albums.empty() || !genres.empty()) {
-        layout->addSpacing(16);
+        layout->addSpacing(8);
 
-        auto* row = new QHBoxLayout();
-        row->setSpacing(8);
+        auto* pills = new QWidget(content);
+        auto* flow  = new FlowLayout(pills, 10);
         if(!albums.empty()) {
-            row->addWidget(new MiniTile(tr("Album"), albums.front().key, content), 1);
+            flow->addWidget(new PillLabel(albums.front().key, tr("Album"), pills));
         }
         if(!genres.empty()) {
-            row->addWidget(new MiniTile(tr("Genre"), genres.front().key, content), 1);
+            flow->addWidget(new PillLabel(genres.front().key, tr("Genre"), pills));
         }
-        layout->addLayout(row);
+        layout->addWidget(pills);
     }
-
-    finishContent(layout);
     return content;
 }
 
@@ -521,13 +545,13 @@ QWidget* YearInReviewDialog::genresPage(const PlayHistoryStats& stats)
 
     layout->addWidget(titleLabel(tr("Genres"), content));
     layout->addWidget(subtitleLabel(tr("%1 genres").arg(number(genres.unique)), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
-    std::vector<ChartData> points;
+    std::vector<ChartData> entries;
     int other = genres.otherListens;
     for(size_t i{0}; i < genres.top.size(); ++i) {
         if(i < 6) {
-            points.push_back({genres.top[i].key, genres.top[i].count});
+            entries.push_back({genres.top[i].key, genres.top[i].count});
         }
         else {
             other += genres.top[i].count;
@@ -535,12 +559,11 @@ QWidget* YearInReviewDialog::genresPage(const PlayHistoryStats& stats)
     }
 
     auto* donut = new DonutChart(content);
-    donut->setRingSize(160);
-    donut->setCentreLabel(tr("Listens"));
-    donut->setData(std::move(points), other);
+    donut->setRingSize(190);
+    donut->setShowValues(false);
+    donut->setCentreLabel(tr("Total listens"));
+    donut->setData(std::move(entries), other);
     layout->addWidget(donut);
-
-    finishContent(layout);
     return content;
 }
 
@@ -550,14 +573,14 @@ QWidget* YearInReviewDialog::clockPage(const PlayHistoryStats& stats)
     auto* content = newContent(layout);
 
     layout->addWidget(titleLabel(tr("Listening clock"), content));
-    layout->addSpacing(12);
+    layout->addSpacing(4);
 
     auto* clock = new ListeningClockChart(content);
-    clock->setClockSize(220);
+    clock->setClockSize(330);
     clock->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     clock->setData(stats.hours);
     layout->addWidget(clock, 0, Qt::AlignHCenter);
-    layout->addSpacing(16);
+    layout->addSpacing(8);
 
     const QLocale locale;
     std::vector<ChartData> weekdays;
@@ -566,11 +589,9 @@ QWidget* YearInReviewDialog::clockPage(const PlayHistoryStats& stats)
             {locale.dayName(i == 0 ? 7 : i, QLocale::ShortFormat), stats.weekdays[static_cast<size_t>(i)]});
     }
     auto* bars = new VerticalBarsChart(content);
-    bars->setPlotHeight(90);
+    bars->setPlotHeight(120);
     bars->setData(std::move(weekdays));
     layout->addWidget(bars);
-
-    finishContent(layout);
     return content;
 }
 
@@ -580,23 +601,22 @@ QWidget* YearInReviewDialog::daysPage(const PlayHistoryStats& stats)
     auto* content = newContent(layout);
 
     layout->addWidget(titleLabel(tr("Days"), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
+    // A single row of weeks across the card, the cells being as large as they can be
     auto* calendar = new CalendarHeatmapChart(content);
-    calendar->setMaxCellSize(12);
+    calendar->setWrapping(false);
+    calendar->setMaxCellSize(14);
     calendar->setData(stats.listensPerDay, stats.firstDay);
     layout->addWidget(calendar);
-    layout->addSpacing(16);
+    layout->addSpacing(12);
 
     if(const auto& streak = stats.longestStreak) {
         layout->addWidget(
             new BigStat(daysText(streak->days), tr("Longest streak • %1").arg(formatDay(streak->startDay())), content));
-        layout->addSpacing(8);
     }
     layout->addWidget(
         new BigStat(number(stats.peakDayListens), tr("Busiest day • %1").arg(formatDay(stats.peakDay)), content));
-
-    finishContent(layout);
     return content;
 }
 
@@ -607,43 +627,39 @@ QWidget* YearInReviewDialog::discoveriesPage(const PlayHistoryStats& stats)
 
     layout->addWidget(titleLabel(tr("Discoveries"), content));
     layout->addWidget(subtitleLabel(tr("First listen"), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
     layout->addLayout(statRow(new BigStat(number(stats.newTracks), tr("Tracks"), content),
                               new BigStat(number(stats.newArtists), tr("Artists"), content)));
 
     if(!stats.newTracksTop.empty()) {
-        layout->addSpacing(12);
+        layout->addSpacing(8);
 
         std::vector<RowListWidget::Row> rows;
         for(size_t i{0}; i < std::min<size_t>(5, stats.newTracksTop.size()); ++i) {
             const auto& track = stats.newTracksTop[i];
             rows.push_back(trackRow(track, number(track.count), formatDay(dateOf(track.timestamp))));
         }
-        layout->addWidget(rowList(std::move(rows), content, false));
+        layout->addWidget(rowList(std::move(rows), m_art, content, false));
     }
 
     if(!stats.newArtistsTop.empty()) {
-        layout->addSpacing(12);
+        layout->addSpacing(4);
 
-        auto* grid = new QGridLayout();
-        grid->setSpacing(8);
+        auto* pills = new QWidget(content);
+        auto* flow  = new FlowLayout(pills, 10);
         for(size_t i{0}; i < std::min<size_t>(6, stats.newArtistsTop.size()); ++i) {
-            const auto& artist = stats.newArtistsTop[i];
-            grid->addWidget(new MiniTile(listensText(artist.count), artist.key, content), static_cast<int>(i) / 2,
-                            static_cast<int>(i) % 2);
+            flow->addWidget(new PillLabel(stats.newArtistsTop[i].key, number(stats.newArtistsTop[i].count), pills));
         }
-        layout->addLayout(grid);
+        layout->addWidget(pills);
     }
 
     if(const auto& favourite = stats.oldestFavourite) {
-        layout->addSpacing(16);
+        layout->addSpacing(8);
         layout->addWidget(
             subtitleLabel(tr("Oldest favourite • %1").arg(formatDay(dateOf(favourite->timestamp))), content));
-        layout->addWidget(rowList({trackRow(*favourite, number(favourite->count))}, content, false));
+        layout->addWidget(rowList({trackRow(*favourite, number(favourite->count))}, m_art, content, false));
     }
-
-    finishContent(layout);
     return content;
 }
 
@@ -655,28 +671,26 @@ QWidget* YearInReviewDialog::songsOfTheYearPage(const PlayHistoryStats& stats)
     QVBoxLayout* layout{nullptr};
     auto* content = newContent(layout);
 
-    layout->addWidget(titleLabel(tr("Your year in %1 songs").arg(songs), content));
-    layout->addSpacing(12);
+    layout->addWidget(titleLabel(tr("Year in %1 songs").arg(songs), content));
+    layout->addSpacing(8);
 
     const QLocale locale;
     auto* grid = new QGridLayout();
-    grid->setSpacing(8);
+    grid->setHorizontalSpacing(14);
+    grid->setVerticalSpacing(14);
     for(int month{0}; month < 12; ++month) {
         const auto& top    = stats.monthlyTop[static_cast<size_t>(month)];
         const QString name = locale.monthName(month + 1, QLocale::ShortFormat);
 
-        auto* tile = top ? new MiniTile(name, top->title.isEmpty() ? tr("Unknown title") : top->title, content)
-                         : new MiniTile(name, u"–"_s, content);
-        // Months without a song keep the same height as the rest
-        tile->setDetail(top ? top->artist : u" "_s);
-        grid->addWidget(tile, month / 3, month % 3);
+        auto* cell = top ? new MonthCell(name, top->title.isEmpty() ? tr("Unknown title") : top->title,
+                                         number(top->count), top->hash, m_art, content)
+                         : new MonthCell(name, {}, {}, {}, m_art, content);
+        grid->addWidget(cell, month / 3, month % 3, Qt::AlignTop | Qt::AlignHCenter);
     }
     for(int column{0}; column < 3; ++column) {
         grid->setColumnStretch(column, 1);
     }
     layout->addLayout(grid);
-
-    finishContent(layout);
     return content;
 }
 
@@ -689,20 +703,19 @@ QWidget* YearInReviewDialog::obsessionPage(const PlayHistoryStats& stats)
 
     if(!stats.obsessions.empty()) {
         layout->addWidget(subtitleLabel(tr("Most played • day"), content));
-        layout->addSpacing(12);
+        layout->addSpacing(8);
 
         std::vector<RowListWidget::Row> rows;
         for(size_t i{0}; i < std::min<size_t>(5, stats.obsessions.size()); ++i) {
             const auto& obsession = stats.obsessions[i];
-            rows.push_back(
-                trackRow(obsession, number(obsession.count) + u"×"_s, formatDay(dateOf(obsession.timestamp))));
+            rows.push_back(trackRow(obsession, number(obsession.count), formatDay(dateOf(obsession.timestamp))));
         }
-        layout->addWidget(rowList(std::move(rows), content, false));
+        layout->addWidget(rowList(std::move(rows), m_art, content, false));
     }
 
     if(const auto& session = stats.longestSession) {
         const QLocale locale;
-        layout->addSpacing(24);
+        layout->addSpacing(16);
         layout->addWidget(new BigStat(formatDuration(session->durationMs()),
                                       tr("Longest session • %1").arg(formatDay(dateOf(session->startMs))), content));
         layout->addWidget(subtitleLabel(
@@ -712,8 +725,6 @@ QWidget* YearInReviewDialog::obsessionPage(const PlayHistoryStats& stats)
                      listensText(session->listens)),
             content));
     }
-
-    finishContent(layout);
     return content;
 }
 
@@ -727,30 +738,28 @@ QWidget* YearInReviewDialog::habitsPage(const PlayHistoryStats& stats)
     auto* content = newContent(layout);
 
     layout->addWidget(titleLabel(tr("Habits"), content));
-    layout->addSpacing(12);
+    layout->addSpacing(8);
 
     layout->addLayout(
         statRow(new BigStat(u"%1%"_s.arg(repeatPercent), tr("Repeat rate"), content),
                 new BigStat(tr("%1 tracks").arg(number(stats.heavyRotationTracks)),
                             tr("Played %1+ times").arg(PlayHistoryStats::HeavyRotationListens), content)));
-    layout->addSpacing(8);
     layout->addLayout(statRow(new BigStat(formatMinuteOfDay(stats.avgFirstMinute), tr("First listen"), content),
                               new BigStat(formatMinuteOfDay(stats.avgLastMinute), tr("Last listen"), content)));
 
     if(!stats.completedAlbums.empty()) {
-        layout->addSpacing(8);
         layout->addWidget(new BigStat(tr("%1 albums").arg(number(static_cast<qint64>(stats.completedAlbums.size()))),
                                       tr("Completed albums"), content));
     }
 
     if(const auto& streak = stats.longestTrackStreak) {
-        layout->addSpacing(16);
+        layout->addSpacing(8);
         layout->addWidget(subtitleLabel(tr("Streak • %1").arg(daysText(streak->days)), content));
-        layout->addWidget(rowList({trackRow(*streak, number(streak->count))}, content, false));
+        layout->addWidget(rowList({trackRow(*streak, number(streak->count))}, m_art, content, false));
     }
 
     if(!stats.rediscoveries.empty()) {
-        layout->addSpacing(16);
+        layout->addSpacing(8);
         layout->addWidget(subtitleLabel(tr("Rediscoveries"), content));
 
         std::vector<RowListWidget::Row> rows;
@@ -758,10 +767,8 @@ QWidget* YearInReviewDialog::habitsPage(const PlayHistoryStats& stats)
             const auto& track = stats.rediscoveries[i];
             rows.push_back(trackRow(track, number(track.count), daysText(track.days)));
         }
-        layout->addWidget(rowList(std::move(rows), content, false));
+        layout->addWidget(rowList(std::move(rows), m_art, content, false));
     }
-
-    finishContent(layout);
     return content;
 }
 
@@ -772,33 +779,26 @@ QWidget* YearInReviewDialog::summaryPage(int year, const PlayHistoryStats& stats
     auto* content = newContent(layout);
 
     layout->addWidget(titleLabel(tr("Your %1").arg(year), content));
-    layout->addSpacing(8);
 
+    // The year's top track, large
     if(!stats.topTracks.empty()) {
         const auto& top = stats.topTracks.front();
 
-        auto* title = new QLabel(top.title.isEmpty() ? tr("Unknown title") : top.title, content);
-        QFont font  = title->font();
-        font.setBold(true);
-        font.setPointSizeF(font.pointSizeF() * 1.4);
-        title->setFont(font);
-        title->setAlignment(Qt::AlignHCenter);
-        title->setWordWrap(true);
-        layout->addWidget(title);
+        layout->addWidget(new HeroCover(top.hash, m_art, 300, content), 0, Qt::AlignHCenter);
 
-        auto* artist = subtitleLabel(trackSubtitle(top), content);
-        artist->setAlignment(Qt::AlignHCenter);
-        layout->addWidget(artist);
-        layout->addSpacing(16);
+        auto* caption = subtitleLabel(top.artist.isEmpty() ? top.title : top.artist + u" - "_s + top.title, content);
+        caption->setAlignment(Qt::AlignHCenter);
+        layout->addWidget(caption);
+        layout->addSpacing(8);
     }
 
     const auto& artists = stats.category(Category::Artist).top;
     const auto& genres  = stats.category(Category::Genre).top;
     const auto& albums  = stats.category(Category::Album).top;
 
-    layout->addLayout(statRow(new BigStat(number(stats.totalListens), tr("Total listens"), content),
-                              new BigStat(formatListenTime(stats.listenSeconds), tr("Total listen time"), content)));
-    layout->addSpacing(8);
+    layout->addLayout(
+        statRow(new BigStat(number(stats.totalListens), tr("Total listens"), content),
+                new BigStat(u"≈ "_s + formatListenTime(stats.listenSeconds), tr("Total listen time"), content)));
 
     QWidget* topCategory = nullptr;
     if(!genres.empty()) {
@@ -812,26 +812,21 @@ QWidget* YearInReviewDialog::summaryPage(int year, const PlayHistoryStats& stats
     }
     layout->addLayout(statRow(new BigStat(artists.empty() ? QString{} : artists.front().key, tr("Top artist"), content),
                               topCategory));
-    layout->addSpacing(8);
     layout->addLayout(statRow(
         new BigStat(daysText(stats.daysWithListens), tr("Days"), content),
         new BigStat(daysText(stats.longestStreak ? stats.longestStreak->days : 0), tr("Longest streak"), content)));
 
     if(previous) {
-        layout->addSpacing(20);
+        layout->addSpacing(8);
         layout->addWidget(subtitleLabel(tr("Previous • %1").arg(year - 1), content));
-        layout->addSpacing(4);
 
-        auto* listens = new MiniTile(tr("Total listens"), number(previous->totalListens), content);
+        auto* listens = new BigStat(number(previous->totalListens), tr("Total listens"), content);
         listens->setDelta(stats.totalListens, previous->totalListens);
 
         const auto& previousArtists = previous->category(Category::Artist).top;
-        layout->addLayout(
-            statRow(listens, new MiniTile(tr("Top artist"),
-                                          previousArtists.empty() ? u"–"_s : previousArtists.front().key, content)));
+        layout->addLayout(statRow(listens, new BigStat(previousArtists.empty() ? u"–"_s : previousArtists.front().key,
+                                                       tr("Top artist"), content)));
     }
-
-    finishContent(layout);
     return content;
 }
 } // namespace Fooyin

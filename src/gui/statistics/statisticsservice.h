@@ -28,7 +28,9 @@
 #include <QObject>
 
 namespace Fooyin {
+class CoverRepository;
 class MusicLibrary;
+class StatsArt;
 
 namespace Stats {
 //! What the statistics are measured against in the library.
@@ -53,11 +55,13 @@ class StatisticsService : public QObject
     Q_OBJECT
 
 public:
-    StatisticsService(PlayHistory* history, MusicLibrary* library, QObject* parent = nullptr);
+    StatisticsService(PlayHistory* history, MusicLibrary* library, CoverRepository* covers, QObject* parent = nullptr);
 
     //! Takes a fresh look at the library, which should be done before the statistics are shown.
     void refreshLibraryInfo();
     [[nodiscard]] const Stats::LibraryInfo& libraryInfo() const;
+    //! Artwork for the tracks in the library.
+    [[nodiscard]] StatsArt* art() const;
 
     [[nodiscard]] QFuture<PlayHistorySummary> summary() const;
     //! Statistics for the listens between @p firstDay and @p lastDay inclusive.
@@ -71,6 +75,7 @@ Q_SIGNALS:
 private:
     PlayHistory* m_history;
     MusicLibrary* m_library;
+    StatsArt* m_art;
     Stats::LibraryInfo m_libraryInfo;
 };
 } // namespace Fooyin

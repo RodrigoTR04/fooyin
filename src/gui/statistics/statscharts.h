@@ -135,6 +135,8 @@ public:
     void setData(std::vector<ChartData> data);
     void setRowHeight(int height);
     void setClickable(bool clickable);
+    //! Numbers each row and draws the bars as pills over a full width track, with the value at the end.
+    void setPillStyle(bool pill);
 
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
@@ -152,6 +154,7 @@ protected:
 private:
     std::vector<ChartData> m_data;
     int m_rowHeight;
+    bool m_pill;
 };
 
 //! Share of a total split between categories, with a legend.
@@ -166,6 +169,8 @@ public:
     void setData(std::vector<ChartData> data, int other = 0);
     void setCentreLabel(const QString& label);
     void setRingSize(int size);
+    //! Whether the legend shows the number of listens as well as the share.
+    void setShowValues(bool show);
 
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
@@ -196,6 +201,7 @@ private:
     std::vector<Segment> m_segments;
     QString m_centreLabel;
     int m_ringSize;
+    bool m_showValues;
 };
 
 //! A single value as a fraction of a whole.
@@ -244,6 +250,7 @@ private:
 
     std::array<int, 24> m_hours;
     int m_size;
+    int m_peak;
 };
 
 //! A grid of cells shaded by value, such as listens by weekday and hour.
@@ -296,6 +303,8 @@ public:
 
     void setData(std::vector<int> listensPerDay, const QDate& firstDay);
     void setMaxCellSize(int size);
+    //! Whether the weeks continue on a new row rather than shrinking the cells when there isn't room.
+    void setWrapping(bool wrap);
 
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] bool hasHeightForWidth() const override;
@@ -345,6 +354,35 @@ private:
     QDate m_lastDay;
     int m_maxValue;
     int m_maxCell;
+    bool m_wrap;
+};
+
+//! A smooth curve through a handful of values, such as listens in each month of a year.
+class SmoothCurveChart : public ChartWidget
+{
+    Q_OBJECT
+
+public:
+    explicit SmoothCurveChart(QWidget* parent = nullptr);
+
+    void setData(std::vector<ChartData> points);
+    void setPlotHeight(int height);
+
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSizeHint() const override;
+
+protected:
+    [[nodiscard]] int hitTest(const QPoint& pos) const override;
+    [[nodiscard]] QString tipFor(int item, const QPoint& pos) const override;
+
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    [[nodiscard]] QRectF plotRect() const;
+    [[nodiscard]] QPointF pointAt(size_t index, const QRectF& plot, int maxValue) const;
+
+    std::vector<ChartData> m_points;
+    int m_plotHeight;
 };
 
 //! Listens over time as a line, either as a running total or per day.

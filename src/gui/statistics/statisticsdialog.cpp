@@ -20,6 +20,7 @@
 #include "statisticsdialog.h"
 
 #include "statisticsservice.h"
+#include "statsart.h"
 #include "statscharts.h"
 #include "statswidgets.h"
 
@@ -50,6 +51,8 @@ using Category = PlayHistoryStats::Category;
 
 //! Number of categories drawn individually in a donut chart, the rest being combined
 constexpr size_t DonutSlices = 8;
+//! Size of the cover shown beside each track in a list
+constexpr int ListArtSize = 44;
 
 QString tr(const char* text)
 {
@@ -111,7 +114,8 @@ RowListWidget::Row trackRow(const PlayHistoryStatsTrack& track, const QString& v
     return {.title    = track.title.isEmpty() ? tr("Unknown title") : track.title,
             .subtitle = subtitle,
             .value    = value,
-            .trailing = trailing};
+            .trailing = trailing,
+            .hash     = track.hash};
 }
 
 QDate dateOf(qint64 timestamp)
@@ -146,7 +150,7 @@ QGridLayout* tileGrid(const std::vector<MiniTile*>& tiles, int columns = 3)
 
 //! A list that starts out short and can be expanded to show the rest.
 QWidget* expandableRows(std::vector<RowListWidget::Row> rows, int initial, int step, QWidget* parent,
-                        bool showRank = true)
+                        bool showRank = true, StatsArt* art = nullptr)
 {
     auto* container = new QWidget(parent);
     auto* layout    = new QVBoxLayout(container);
@@ -154,6 +158,7 @@ QWidget* expandableRows(std::vector<RowListWidget::Row> rows, int initial, int s
     layout->setSpacing(0);
 
     auto* list = new RowListWidget(container);
+    list->setArt(art, art ? ListArtSize : 0);
     auto* more = new ShowMoreButton(static_cast<int>(rows.size()), initial, step, container);
     auto all   = std::make_shared<std::vector<RowListWidget::Row>>(std::move(rows));
 
@@ -573,7 +578,7 @@ void StatisticsDialog::addListeningClock(QVBoxLayout* layout, const PlayHistoryS
     auto* card = new StatsCard(tr("Listening clock"));
 
     auto* clock = new ListeningClockChart(card);
-    clock->setClockSize(200);
+    clock->setClockSize(250);
     clock->setData(stats.hours);
     clock->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
@@ -638,6 +643,7 @@ void StatisticsDialog::addHabits(QVBoxLayout* layout, const PlayHistoryStats& st
                          card));
 
         auto* list = new RowListWidget(card);
+        list->setArt(m_service->art(), ListArtSize);
         list->setRows({trackRow(*streak, number(streak->count))}, false);
         card->addWidget(list);
     }
@@ -655,7 +661,7 @@ void StatisticsDialog::addObsession(QVBoxLayout* layout, const PlayHistoryStats&
             rows.push_back(
                 trackRow(obsession, number(obsession.count) + u"×"_s, formatDay(dateOf(obsession.timestamp))));
         }
-        card->addWidget(expandableRows(std::move(rows), 5, 5, card, false));
+        card->addWidget(expandableRows(std::move(rows), 5, 5, card, false, m_service->art()));
     }
 
     if(const auto& session = stats.longestSession) {
@@ -681,7 +687,7 @@ void StatisticsDialog::addDiscoveries(QVBoxLayout* layout, const PlayHistoryStat
         for(const auto& track : stats.newTracksTop) {
             rows.push_back(trackRow(track, number(track.count), formatDay(dateOf(track.timestamp))));
         }
-        card->addWidget(expandableRows(std::move(rows), 5, 5, card, false));
+        card->addWidget(expandableRows(std::move(rows), 5, 5, card, false, m_service->art()));
     }
 
     if(!stats.newArtistsTop.empty()) {
@@ -698,6 +704,7 @@ void StatisticsDialog::addDiscoveries(QVBoxLayout* layout, const PlayHistoryStat
         card->addWidget(captionLabel(tr("Oldest favourite • %1").arg(formatDay(dateOf(favourite->timestamp))), card));
 
         auto* list = new RowListWidget(card);
+        list->setArt(m_service->art(), ListArtSize);
         list->setRows({trackRow(*favourite, number(favourite->count))}, false);
         card->addWidget(list);
     }
@@ -713,7 +720,7 @@ void StatisticsDialog::addTopTracks(QVBoxLayout* layout, const PlayHistoryStats&
     for(const auto& track : stats.topTracks) {
         rows.push_back(trackRow(track, number(track.count)));
     }
-    card->addWidget(expandableRows(std::move(rows), 10, 10, card));
+    card->addWidget(expandableRows(std::move(rows), 10, 10, card, true, m_service->art()));
 
     layout->addWidget(card);
 }
@@ -727,7 +734,8 @@ void StatisticsDialog::addMostPlayed(QVBoxLayout* layout, const PlayHistoryStats
             rows.push_back({.title    = top.front().key,
                             .subtitle = categoryName(category),
                             .value    = number(top.front().count),
-                            .trailing = {}});
+                            .trailing = {},
+                            .hash     = {}});
         }
     }
     if(rows.empty()) {
@@ -782,6 +790,7 @@ void StatisticsDialog::addRediscoveries(QVBoxLayout* layout, const PlayHistorySt
     }
 
     auto* list = new RowListWidget(card);
+    list->setArt(m_service->art(), ListArtSize);
     list->setRows(std::move(rows), false);
     card->addWidget(list);
     layout->addWidget(card);
@@ -797,7 +806,8 @@ void StatisticsDialog::addCompletedAlbums(QVBoxLayout* layout, const PlayHistory
         rows.push_back({.title    = album.name,
                         .subtitle = tr("%1 tracks").arg(album.tracks),
                         .value    = number(album.listens),
-                        .trailing = {}});
+                        .trailing = {},
+                        .hash     = {}});
     }
     card->addWidget(expandableRows(std::move(rows), 5, 5, card, false));
     layout->addWidget(card);

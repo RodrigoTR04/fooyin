@@ -275,7 +275,6 @@ GuiApplication::GuiApplication(Application* core)
     , m_playbackMenu{new PlaybackMenu(m_actionManager, m_playerController, m_settings, this)}
     , m_libraryMenu{new LibraryMenu(m_core, m_actionManager, this)}
     , m_helpMenu{new HelpMenu(m_actionManager, this)}
-    , m_statisticsMenu{new StatisticsMenu(m_core, m_actionManager, this)}
     , m_propertiesDialog{new PropertiesDialog(m_actionManager, m_settings, this)}
     , m_scriptCommandHandler{std::make_unique<ScriptCommandHandler>(m_actionManager, m_playerController,
                                                                     m_propertiesDialog, m_selectionController.get(),
@@ -285,6 +284,7 @@ GuiApplication::GuiApplication(Application* core)
     , m_styleProvider{new GuiStyleProvider(m_settings, this)}
     , m_advancedSettingsRegistry{std::make_unique<AdvancedSettingsRegistry>(m_settings)}
     , m_coverRepository{new CoverRepository(m_core->audioLoader(), m_core->remoteIoService(), m_settings, this)}
+    , m_statisticsMenu{new StatisticsMenu(m_core, m_actionManager, m_coverRepository, this)}
     , m_guiPluginContext{m_actionManager,
                          m_layoutProvider.get(),
                          m_selectionController.get(),

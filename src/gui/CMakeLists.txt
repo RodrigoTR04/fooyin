@@ -641,6 +641,8 @@ set(SOURCES
     statistics/statisticsdialog.h
     statistics/statisticsservice.cpp
     statistics/statisticsservice.h
+    statistics/statsart.cpp
+    statistics/statsart.h
     statistics/statscharts.cpp
     statistics/statscharts.h
     statistics/statscolours.h

@@ -244,7 +244,6 @@ private:
     PlaybackMenu* m_playbackMenu;
     LibraryMenu* m_libraryMenu;
     HelpMenu* m_helpMenu;
-    StatisticsMenu* m_statisticsMenu;
 
     PropertiesDialog* m_propertiesDialog;
     std::unique_ptr<ScriptCommandHandler> m_scriptCommandHandler;
@@ -253,6 +252,7 @@ private:
     GuiStyleProvider* m_styleProvider;
     std::unique_ptr<AdvancedSettingsRegistry> m_advancedSettingsRegistry;
     CoverRepository* m_coverRepository;
+    StatisticsMenu* m_statisticsMenu;
 
     GuiPluginContext m_guiPluginContext;
 

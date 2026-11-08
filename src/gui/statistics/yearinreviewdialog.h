@@ -34,6 +34,7 @@ class QVBoxLayout;
 
 namespace Fooyin {
 class StatisticsService;
+class StatsArt;
 
 namespace Stats {
 class ChipBar;
@@ -57,14 +58,9 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    struct Page
-    {
-        QWidget* widget{nullptr};
-        QColor tint;
-    };
-
     void loadSummary();
     void selectYear(int year);
     void showMessage(const QString& message);
@@ -72,6 +68,10 @@ private:
     void addPage(QWidget* content);
     void buildPages(int year, const PlayHistoryStats& stats, const std::optional<PlayHistoryStats>& previous);
     void goToPage(int index);
+    //! Sizes the card to fit the current page, as the pages differ in how much they show.
+    void updateCardHeight();
+    //! Tints the card with a colour from the cover of the year's top track.
+    void refreshTint();
     void exportCurrent();
     void exportAll();
     [[nodiscard]] QPixmap grabPage(int index);
@@ -89,6 +89,7 @@ private:
     QWidget* summaryPage(int year, const PlayHistoryStats& stats, const std::optional<PlayHistoryStats>& previous);
 
     StatisticsService* m_service;
+    StatsArt* m_art;
 
     Stats::ChipBar* m_years;
     QToolButton* m_exportButton;
@@ -100,10 +101,11 @@ private:
 
     PlayHistorySummary m_summary;
     std::vector<int> m_yearOrder;
-    std::vector<Page> m_pages;
+    std::vector<QWidget*> m_pages;
+    QString m_topTrack;
     int m_year;
     int m_pendingYear;
     int m_requestId;
-    int m_hue;
+    int m_cardWidth;
 };
 } // namespace Fooyin

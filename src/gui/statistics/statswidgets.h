@@ -24,12 +24,18 @@
 #include <QColor>
 #include <QDate>
 #include <QFrame>
+#include <QLayout>
 #include <QPushButton>
 #include <QString>
 #include <QStringList>
 
+#include <array>
 #include <optional>
 #include <vector>
+
+namespace Fooyin {
+class StatsArt;
+}
 
 class QButtonGroup;
 class QHBoxLayout;
@@ -105,6 +111,9 @@ class BigStat : public QWidget
 public:
     BigStat(QString value, QString label, QWidget* parent = nullptr);
 
+    //! Shows the percentage change from @p previous to @p current next to the figure.
+    void setDelta(qint64 current, qint64 previous);
+
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
 
@@ -114,6 +123,7 @@ protected:
 private:
     QString m_value;
     QString m_label;
+    std::optional<double> m_delta;
 };
 
 //! A row of mutually exclusive toggle buttons.
@@ -173,12 +183,18 @@ public:
         QString value;
         //! A secondary note under the value, e.g. a date.
         QString trailing;
+        //! The track the row is for, used to show its artwork.
+        QString hash;
     };
 
     explicit RowListWidget(QWidget* parent = nullptr);
 
     void setRows(std::vector<Row> rows, bool showRank = true);
     void setRowHeight(int height);
+    //! Shows the artwork of each row's track at @p size (0 to hide it), taken from @p art.
+    void setArt(StatsArt* art, int size);
+    //! Scales the text, e.g. for the larger rows of the year in review.
+    void setTextScale(qreal scale);
 
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
@@ -190,27 +206,133 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
+    [[nodiscard]] int effectiveRowHeight() const;
+
     std::vector<Row> m_rows;
+    StatsArt* m_art;
+    qreal m_textScale;
     bool m_showRank;
     int m_rowHeight;
+    int m_artSize;
 };
 
-//! The tinted card each page of the year in review is shown on.
-class StoryCard : public QWidget
+//! A month of the year in review: the cover of its most played track with the track beneath.
+class MonthCell : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit StoryCard(QWidget* parent = nullptr);
+    //! @p hash is empty for a month without listens.
+    MonthCell(QString month, QString title, QString detail, QString hash, StatsArt* art, QWidget* parent = nullptr);
 
-    //! Fades the card from a lighter to a darker shade of @p tint, with light text and charts over the top.
-    void setTint(const QColor& tint);
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
+    [[nodiscard]] int heightForWidth(int width) const override;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    QColor m_tint;
+    [[nodiscard]] int textHeight() const;
+
+    QString m_month;
+    QString m_title;
+    QString m_detail;
+    QString m_hash;
+    StatsArt* m_art;
+};
+
+//! A track's cover drawn as a large rounded square, as wide as there is room for up to a maximum.
+class HeroCover : public QWidget
+{
+    Q_OBJECT
+
+public:
+    HeroCover(QString hash, StatsArt* art, int maxSide, QWidget* parent = nullptr);
+
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
+    [[nodiscard]] int heightForWidth(int width) const override;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QString m_hash;
+    StatsArt* m_art;
+    int m_maxSide;
+};
+
+//! A rounded label with a name and a count, such as an artist and the number of times they were listened to.
+class PillLabel : public QWidget
+{
+    Q_OBJECT
+
+public:
+    PillLabel(QString name, QString count, QWidget* parent = nullptr);
+
+    [[nodiscard]] QSize sizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QString m_name;
+    QString m_count;
+};
+
+//! Lays widgets out in rows, wrapping to a new row when one is full.
+class FlowLayout : public QLayout
+{
+    Q_OBJECT
+
+public:
+    explicit FlowLayout(QWidget* parent = nullptr, int spacing = 8);
+    ~FlowLayout() override;
+
+    void addItem(QLayoutItem* item) override;
+    [[nodiscard]] int count() const override;
+    [[nodiscard]] QLayoutItem* itemAt(int index) const override;
+    QLayoutItem* takeAt(int index) override;
+    [[nodiscard]] Qt::Orientations expandingDirections() const override;
+    [[nodiscard]] bool hasHeightForWidth() const override;
+    [[nodiscard]] int heightForWidth(int width) const override;
+    void setGeometry(const QRect& rect) override;
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSize() const override;
+
+private:
+    int layoutItems(const QRect& rect, bool apply) const;
+
+    QList<QLayoutItem*> m_items;
+    int m_spacing;
+};
+
+//! The dark card each page of the year in review is shown on, tinted by a colour from the year's top cover.
+class StoryCard : public QWidget
+{
+    Q_OBJECT
+
+public:
+    //! Height reserved at the bottom of a page for the badge.
+    static constexpr int BadgeSpace = 92;
+
+    explicit StoryCard(QWidget* parent = nullptr);
+
+    //! Sets the colour the card and the charts on it are drawn in. Widgets on the card use the palette set here.
+    void setTint(const QColor& tint);
+    //! Sets the year and the listens in each month shown in the badge.
+    void setBadge(int year, const std::array<int, 12>& months);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    void paintBadge(QPainter& painter) const;
+
+    QColor m_background;
+    int m_year;
+    std::array<int, 12> m_months;
 };
 
 //! Shows how many pages there are and which is current, and lets one be picked.
