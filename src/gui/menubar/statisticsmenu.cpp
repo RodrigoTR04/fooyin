@@ -19,7 +19,7 @@
 
 #include "statisticsmenu.h"
 
-#include "statistics/statisticsdialog.h"
+#include "statistics/chartsdialog.h"
 #include "statistics/statisticsservice.h"
 #include "statistics/yearinreviewdialog.h"
 
@@ -69,9 +69,9 @@ void StatisticsMenu::showCharts()
         return;
     }
 
-    m_chartsDialog = new StatisticsDialog(m_service, Utils::getMainWindow());
+    m_chartsDialog = new ChartsDialog(m_service, Utils::getMainWindow());
     m_chartsDialog->setAttribute(Qt::WA_DeleteOnClose);
-    QObject::connect(m_chartsDialog, &StatisticsDialog::yearInReviewRequested, this,
+    QObject::connect(m_chartsDialog, &ChartsDialog::yearInReviewRequested, this,
                      [this](int year) { showYearInReview(year); });
     m_chartsDialog->show();
 }

@@ -49,6 +49,7 @@
 #include <core/engine/outputplugin.h>
 #include <core/network/networkaccessmanager.h>
 #include <core/network/remoteioservice.h>
+#include <core/player/playbackhistoryservice.h>
 #include <core/player/playercontroller.h>
 #include <core/playhistory/playhistory.h>
 #include <core/playlist/playlisthandler.h>
@@ -58,6 +59,7 @@
 #include <core/scripting/scriptregistry.h>
 #include <utils/fileutils.h>
 #include <utils/settings/settingsmanager.h>
+#include <utils/timer.h>
 
 #include <QCoreApplication>
 #include <QFile>
@@ -120,6 +122,8 @@ Application::Application(QObject* parent)
     , m_playerController{new PlayerController(m_settings, m_playlistHandler, this)}
     , m_playHistory{new PlayHistory(m_database->connectionPool(), this)}
     , m_scriptContext{new ScriptContextService(m_playerController, m_playlistHandler, this)}
+    , m_playbackHistoryService{std::make_unique<PlaybackHistoryService>(m_playerController,
+                                                                        m_database->connectionPool())}
     , m_playbackQueueStore{m_database->connectionPool(), m_library, m_playlistHandler}
     , m_engine{std::make_unique<EngineHandler>(m_audioLoader, m_playerController, m_settings, m_dspRegistry.get())}
     , m_sortingRegistry{new SortingRegistry(m_settings, this)}
@@ -140,6 +144,10 @@ Application::Application(QObject* parent)
     m_audioLoader->setRemoteSourceProvider(m_remoteIo);
     m_translations.initialiseTranslations(m_settings->value<Settings::Core::Language>());
     loadDatabaseSettings();
+
+    m_playbackHistoryService->setTrackingMode(m_settings->value<Settings::Core::ListeningHistoryMode>());
+    m_settings->subscribe<Settings::Core::ListeningHistoryMode>(m_playbackHistoryService.get(),
+                                                                &PlaybackHistoryService::setTrackingMode);
 
     QObject::connect(m_playlistHandler, &PlaylistHandler::playlistAdded, this, &Application::startSaveTimer);
     QObject::connect(m_playlistHandler, &PlaylistHandler::playlistRemoved, this, &Application::startSaveTimer);
@@ -209,6 +217,7 @@ Application::Application(QObject* parent)
     QObject::connect(m_engine.get(), &EngineController::trackStatusContextChanged, this,
                      [this](const Engine::TrackStatusContext& context) {
                          if(context.status == Engine::TrackStatus::Invalid) {
+                             m_playbackHistoryService->playbackError();
                              m_playerController->pause();
                          }
                      });
@@ -224,12 +233,17 @@ void Application::startup()
 void Application::completeStartup()
 {
     Q_ASSERT(ScriptRegistry::instance().isFinalised());
+    QObject::connect(
+        m_library, &MusicLibrary::tracksLoaded, this,
+        [timer = Timer{}]() { qCInfo(APP) << "Library loaded in" << timer.elapsedFormatted(); },
+        Qt::SingleShotConnection);
     m_library->loadAllTracks();
 }
 
 void Application::shutdown()
 {
     m_playlistHandler->finishPendingUpdates();
+    m_playbackHistoryService->shutdown();
     m_playbackQueueSaveTimer.stop();
     saveDatabaseSettings();
 
@@ -299,6 +313,11 @@ PlayHistory* Application::playHistory() const
 ScriptContextService* Application::scriptContextService() const
 {
     return m_scriptContext;
+}
+
+PlaybackHistoryService* Application::playbackHistoryService() const
+{
+    return m_playbackHistoryService.get();
 }
 
 LibraryManager* Application::libraryManager() const

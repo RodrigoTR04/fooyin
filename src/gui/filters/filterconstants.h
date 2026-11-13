@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include "filterfwd.h"
+
 #include <gui/widgets/expandedtreeview.h>
 
 namespace Fooyin::Filters::Constants {

@@ -43,6 +43,7 @@ namespace Fooyin::Filters {
 CoverFlowConfigWidget::CoverFlowConfigWidget(QWidget* parent)
     : QWidget{parent}
     , m_preview{new ExpandedTreeView(this)}
+    , m_style{new QComboBox(this)}
     , m_labelPosition{new QComboBox(this)}
     , m_updating{false}
 {
@@ -147,8 +148,16 @@ CoverFlowConfigWidget::CoverFlowConfigWidget(QWidget* parent)
     m_labelPosition->addItems({tr("Below artwork"), tr("Above artwork"), tr("On artwork")});
     m_labelPosition->setToolTip(tr("Position of the current item’s labels relative to its artwork"));
 
+    m_style->addItem(tr("Cover"), static_cast<int>(CoverStyle::Cover));
+    m_style->addItem(tr("Disc"), static_cast<int>(CoverStyle::Disc));
+    m_style->addItem(tr("Vinyl"), static_cast<int>(CoverStyle::Vinyl));
+
     grid = appearance[0];
     row  = 0;
+    section(tr("Artwork"));
+    grid->addWidget(new QLabel(tr("Style") + u":"_s, this), row, 0);
+    grid->addWidget(m_style, row++, 1);
+    QObject::connect(m_style, &QComboBox::currentIndexChanged, this, &CoverFlowConfigWidget::updateControls);
     section(tr("Labels"));
     boolean(tr("Show labels"), &CoverFlowSettings::showLabels,
             tr("Show text from the displayed filter columns for the current item"));
@@ -188,7 +197,8 @@ CoverFlowConfigWidget::CoverFlowConfigWidget(QWidget* parent)
 
 CoverFlowSettings CoverFlowConfigWidget::settings() const
 {
-    CoverFlowSettings result;
+    auto result  = m_preview->coverFlowSettings();
+    result.style = coverStyleFromInt(m_style->currentData().toInt());
 
     for(const auto& control : m_integerControls) {
         result.*control.member = control.editor->value();
@@ -217,8 +227,10 @@ void CoverFlowConfigWidget::setSettings(const CoverFlowSettings& settings)
             control.editor->setChecked(validated.*control.member);
         }
         m_labelPosition->setCurrentIndex(validated.labelsOnArtwork ? 2 : validated.labelsAboveArtwork ? 1 : 0);
+        m_style->setCurrentIndex(m_style->findData(static_cast<int>(validated.style)));
     }
 
+    m_preview->setCoverFlowSettings(validated);
     updateControls();
 }
 
@@ -226,6 +238,16 @@ void CoverFlowConfigWidget::setArtworkSettings(const QSize& size, int cornerRadi
 {
     m_preview->changeIconSize(size);
     m_preview->setIconItemCornerRadius(cornerRadius);
+}
+
+void CoverFlowConfigWidget::setArtworkFrames(const ArtworkFrame& hover, const ArtworkFrame& selection)
+{
+    auto* delegate = qobject_cast<FilterDelegate*>(m_preview->itemDelegate());
+    delegate->setArtworkFrames(hover, selection);
+    auto settings       = m_preview->coverFlowSettings();
+    settings.frameWidth = std::max(hover.enabled ? hover.width : 0, selection.enabled ? selection.width : 0);
+    m_preview->setCoverFlowSettings(settings);
+    m_preview->viewport()->update();
 }
 
 QSize CoverFlowConfigWidget::sizeHint() const

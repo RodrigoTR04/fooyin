@@ -17,7 +17,7 @@
  *
  */
 
-#include "statisticsdialog.h"
+#include "chartsdialog.h"
 
 #include "statisticsservice.h"
 #include "statsart.h"
@@ -60,7 +60,7 @@ constexpr int ListArtSize = 44;
 
 QString tr(const char* text)
 {
-    return QCoreApplication::translate("Fooyin::StatisticsDialog", text);
+    return QCoreApplication::translate("Fooyin::ChartsDialog", text);
 }
 
 QString number(qint64 value)
@@ -201,7 +201,7 @@ QString minuteRange(const PlayHistoryStatsSession& session)
 }
 } // namespace
 
-StatisticsDialog::StatisticsDialog(StatisticsService* service, QWidget* parent)
+ChartsDialog::ChartsDialog(StatisticsService* service, QWidget* parent)
     : QDialog{parent}
     , m_service{service}
     , m_periods{new ChipBar(this)}
@@ -252,24 +252,24 @@ StatisticsDialog::StatisticsDialog(StatisticsService* service, QWidget* parent)
 
     QObject::connect(m_periods, &ChipBar::indexChanged, this,
                      [this](int index) { selectPeriod(static_cast<Period>(index)); });
-    QObject::connect(m_customButton, &QPushButton::clicked, this, &StatisticsDialog::chooseCustomRange);
+    QObject::connect(m_customButton, &QPushButton::clicked, this, &ChartsDialog::chooseCustomRange);
     QObject::connect(m_yearButton, &QPushButton::clicked, this, [this]() {
         if(!m_summary.years.empty()) {
             Q_EMIT yearInReviewRequested(m_summary.years.back());
         }
     });
-    QObject::connect(m_exportButton, &QPushButton::clicked, this, &StatisticsDialog::exportImage);
+    QObject::connect(m_exportButton, &QPushButton::clicked, this, &ChartsDialog::exportImage);
 
     // Listens counted while the dialog is open show up shortly after, rather than all at once in a burst
     m_reloadTimer->setSingleShot(true);
     m_reloadTimer->setInterval(1500);
     QObject::connect(m_service, &StatisticsService::historyChanged, m_reloadTimer, qOverload<>(&QTimer::start));
-    QObject::connect(m_reloadTimer, &QTimer::timeout, this, &StatisticsDialog::reloadSummary);
+    QObject::connect(m_reloadTimer, &QTimer::timeout, this, &ChartsDialog::reloadSummary);
 
     loadSummary();
 }
 
-std::pair<QDate, QDate> StatisticsDialog::resolveRange() const
+std::pair<QDate, QDate> ChartsDialog::resolveRange() const
 {
     const QDate today = QDate::currentDate();
 
@@ -294,7 +294,7 @@ std::pair<QDate, QDate> StatisticsDialog::resolveRange() const
     return {today, today};
 }
 
-void StatisticsDialog::selectPeriod(Period period)
+void ChartsDialog::selectPeriod(Period period)
 {
     m_period = period;
     m_periods->setCurrentIndex(period == Period::Custom ? -1 : static_cast<int>(period));
@@ -305,7 +305,7 @@ void StatisticsDialog::selectPeriod(Period period)
     refresh();
 }
 
-void StatisticsDialog::chooseCustomRange()
+void ChartsDialog::chooseCustomRange()
 {
     const QDate today  = QDate::currentDate();
     const QDate oldest = m_summary.isEmpty() ? today : dateOf(m_summary.oldestTimestamp);
@@ -337,7 +337,7 @@ void StatisticsDialog::chooseCustomRange()
     }
 }
 
-void StatisticsDialog::setCustomRange(const QDate& first, const QDate& last)
+void ChartsDialog::setCustomRange(const QDate& first, const QDate& last)
 {
     m_customFirst = first;
     m_customLast  = last;
@@ -345,7 +345,7 @@ void StatisticsDialog::setCustomRange(const QDate& first, const QDate& last)
     m_customButton->setText(formatRange(first, last));
 }
 
-void StatisticsDialog::loadSummary()
+void ChartsDialog::loadSummary()
 {
     m_service->refreshLibraryInfo();
     showMessage(tr("Loading…"));
@@ -353,7 +353,7 @@ void StatisticsDialog::loadSummary()
     m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
 }
 
-void StatisticsDialog::reloadSummary()
+void ChartsDialog::reloadSummary()
 {
     // The library may have changed too, and what's shown about it has to agree with the listens
     m_service->refreshLibraryInfo();
@@ -361,7 +361,7 @@ void StatisticsDialog::reloadSummary()
     m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
 }
 
-void StatisticsDialog::applySummary(const PlayHistorySummary& summary)
+void ChartsDialog::applySummary(const PlayHistorySummary& summary)
 {
     m_summary = summary;
     m_yearButton->setVisible(!summary.years.empty());
@@ -371,7 +371,7 @@ void StatisticsDialog::applySummary(const PlayHistorySummary& summary)
     refresh();
 }
 
-void StatisticsDialog::refresh()
+void ChartsDialog::refresh()
 {
     const int id = ++m_requestId;
 
@@ -406,12 +406,12 @@ void StatisticsDialog::refresh()
     });
 }
 
-void StatisticsDialog::showMessage(const QString& message)
+void ChartsDialog::showMessage(const QString& message)
 {
     setContent(createEmptyHint(message));
 }
 
-void StatisticsDialog::setContent(QWidget* content)
+void ChartsDialog::setContent(QWidget* content)
 {
     const int scrolled = m_scrollArea->verticalScrollBar()->value();
 
@@ -425,7 +425,7 @@ void StatisticsDialog::setContent(QWidget* content)
     }
 }
 
-void StatisticsDialog::showStats(const PlayHistoryStats& current, const std::optional<PlayHistoryStats>& previous)
+void ChartsDialog::showStats(const PlayHistoryStats& current, const std::optional<PlayHistoryStats>& previous)
 {
     m_stats                       = std::make_shared<const PlayHistoryStats>(current);
     const PlayHistoryStats& stats = *m_stats;
@@ -454,7 +454,7 @@ void StatisticsDialog::showStats(const PlayHistoryStats& current, const std::opt
     m_exportButton->setEnabled(true);
 }
 
-void StatisticsDialog::exportImage()
+void ChartsDialog::exportImage()
 {
     QWidget* content = m_scrollArea->widget();
     if(!content) {
@@ -477,7 +477,7 @@ void StatisticsDialog::exportImage()
     content->grab().save(path, "PNG");
 }
 
-QWidget* StatisticsDialog::makeOverview(const PlayHistoryStats& stats, const std::optional<PlayHistoryStats>& previous)
+QWidget* ChartsDialog::makeOverview(const PlayHistoryStats& stats, const std::optional<PlayHistoryStats>& previous)
 {
     auto* card = new StatsCard({});
 
@@ -512,7 +512,7 @@ QWidget* StatisticsDialog::makeOverview(const PlayHistoryStats& stats, const std
     return card;
 }
 
-QWidget* StatisticsDialog::makeMonths(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeMonths(const PlayHistoryStats& stats)
 {
     if(stats.totalDays() <= 31) {
         return nullptr;
@@ -563,7 +563,7 @@ QWidget* StatisticsDialog::makeMonths(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeListens(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeListens(const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Listens"), formatRange(stats.firstDay, stats.lastDay));
 
@@ -583,7 +583,7 @@ QWidget* StatisticsDialog::makeListens(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeDays(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeDays(const PlayHistoryStats& stats)
 {
     QString subtitle;
     if(stats.longestStreak) {
@@ -604,7 +604,7 @@ QWidget* StatisticsDialog::makeDays(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeListeningClock(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeListeningClock(const PlayHistoryStats& stats)
 {
     const QLocale locale;
     // Sunday first, matching the data
@@ -649,7 +649,7 @@ QWidget* StatisticsDialog::makeListeningClock(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeHabits(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeHabits(const PlayHistoryStats& stats)
 {
     const int repeatPercent = stats.totalListens <= 1
                                 ? 0
@@ -700,7 +700,7 @@ QWidget* StatisticsDialog::makeHabits(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeObsession(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeObsession(const PlayHistoryStats& stats)
 {
     if(stats.obsessions.empty() && !stats.longestSession) {
         return nullptr;
@@ -725,7 +725,7 @@ QWidget* StatisticsDialog::makeObsession(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeDiscoveries(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeDiscoveries(const PlayHistoryStats& stats)
 {
     auto* card
         = new StatsCard(tr("Discoveries"), tr("First listen • %1").arg(formatRange(stats.firstDay, stats.lastDay)));
@@ -764,7 +764,7 @@ QWidget* StatisticsDialog::makeDiscoveries(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeTopTracks(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeTopTracks(const PlayHistoryStats& stats)
 {
     auto* card = new StatsCard(tr("Top tracks"));
 
@@ -777,7 +777,7 @@ QWidget* StatisticsDialog::makeTopTracks(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeMostPlayed(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeMostPlayed(const PlayHistoryStats& stats)
 {
     std::vector<RowListWidget::Row> rows;
     for(const Category category : {Category::Artist, Category::Album, Category::Genre}) {
@@ -801,7 +801,7 @@ QWidget* StatisticsDialog::makeMostPlayed(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeTopArtists(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeTopArtists(const PlayHistoryStats& stats)
 {
     if(stats.category(Category::Artist).top.empty()) {
         return nullptr;
@@ -837,7 +837,7 @@ QWidget* StatisticsDialog::makeTopArtists(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeRediscoveries(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeRediscoveries(const PlayHistoryStats& stats)
 {
     if(stats.rediscoveries.empty()) {
         return nullptr;
@@ -858,7 +858,7 @@ QWidget* StatisticsDialog::makeRediscoveries(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeCompletedAlbums(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeCompletedAlbums(const PlayHistoryStats& stats)
 {
     if(stats.completedAlbums.empty()) {
         return nullptr;
@@ -879,7 +879,7 @@ QWidget* StatisticsDialog::makeCompletedAlbums(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeCategories(const PlayHistoryStats& /*stats*/)
+QWidget* ChartsDialog::makeCategories(const PlayHistoryStats& /*stats*/)
 {
     auto* card = new StatsCard(tr("Listens by"));
 
@@ -925,7 +925,7 @@ QWidget* StatisticsDialog::makeCategories(const PlayHistoryStats& /*stats*/)
     return card;
 }
 
-QWidget* StatisticsDialog::makeAudioQuality(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeAudioQuality(const PlayHistoryStats& stats)
 {
     if(stats.losslessListens + stats.lossyListens == 0
        && std::ranges::none_of(stats.bitrateBuckets, [](int count) { return count > 0; })) {
@@ -962,7 +962,7 @@ QWidget* StatisticsDialog::makeAudioQuality(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeListenTime(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeListenTime(const PlayHistoryStats& stats)
 {
     const qint64 listenMs  = stats.listenSeconds * 1000;
     const qint64 libraryMs = m_service->libraryInfo().durationMs;
@@ -984,7 +984,7 @@ QWidget* StatisticsDialog::makeListenTime(const PlayHistoryStats& stats)
     return card;
 }
 
-QWidget* StatisticsDialog::makeDecades(const PlayHistoryStats& stats)
+QWidget* ChartsDialog::makeDecades(const PlayHistoryStats& stats)
 {
     if(stats.decades.empty()) {
         return nullptr;
@@ -1004,4 +1004,4 @@ QWidget* StatisticsDialog::makeDecades(const PlayHistoryStats& stats)
 }
 } // namespace Fooyin
 
-#include "moc_statisticsdialog.cpp"
+#include "moc_chartsdialog.cpp"

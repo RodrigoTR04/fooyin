@@ -29,6 +29,7 @@
 #include <core/track.h>
 #include <gui/coverartworktypes.h>
 #include <gui/fywidget.h>
+#include <gui/trackselectioncontroller.h>
 #include <gui/widgets/backgroundconfig.h>
 #include <gui/widgets/expandedtreeview.h>
 
@@ -132,7 +133,7 @@ public:
 
     struct ConfigData
     {
-        int doubleClickAction{1};
+        int doubleClickAction{static_cast<int>(TrackAction::PlayResultsPlaylist)};
         int middleClickAction{0};
         // -1 inherits the filter action
         int expansionDoubleClickAction{-1};
@@ -146,6 +147,7 @@ public:
         bool restoreState{true};
         ExpandedTreeView::ViewMode viewMode{ExpandedTreeView::ViewMode::Tree};
         ExpandedTreeView::CaptionDisplay captionDisplay{ExpandedTreeView::CaptionDisplay::Bottom};
+        bool overlayCaptionsOnInteraction{false};
         Track::Cover coverType{Track::Cover::Front};
         std::optional<ArtworkSourcePreference> coverSource;
         bool showSummary{true};
@@ -155,16 +157,22 @@ public:
         int rowHeight{0};
         QSize iconSize{100, 100};
         bool autoFitArtwork{true};
+        ArtworkScaling artworkScaling{ArtworkScaling::Fit};
         int iconHorizontalGap{-1};
         int iconVerticalGap{10};
         bool overrideGridMargins{false};
         QMargins gridMargins{10, 10, 10, 10};
         int artworkCornerRadius{0};
+        ArtworkFrame artworkHoverFrame{.width = 2};
+        ArtworkFrame artworkSelectionFrame{.width = 4};
+        bool highlightHoveredCaptions{true};
+        bool highlightSelectedCaptions{true};
         bool overrideArtworkMargins{false};
         QMargins artworkMargins{8, 8, 8, 8};
         CoverFlowSettings coverFlow;
         BackgroundConfig background;
         bool expandGroups{false};
+        ExpandedTreeView::ExpansionPosition expansionPosition{ExpandedTreeView::ExpansionPosition::Below};
         bool expansionAnimated{true};
         int expansionAnimationDuration{250};
         bool expansionAlternatingRows{false};

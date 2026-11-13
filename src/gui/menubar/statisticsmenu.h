@@ -26,7 +26,7 @@ namespace Fooyin {
 class ActionManager;
 class Application;
 class CoverRepository;
-class StatisticsDialog;
+class ChartsDialog;
 class StatisticsService;
 class YearInReviewDialog;
 
@@ -44,7 +44,7 @@ private:
     void showCharts();
 
     StatisticsService* m_service;
-    QPointer<StatisticsDialog> m_chartsDialog;
+    QPointer<ChartsDialog> m_chartsDialog;
     QPointer<YearInReviewDialog> m_yearDialog;
 };
 } // namespace Fooyin

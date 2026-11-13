@@ -71,27 +71,34 @@ Q_LOGGING_CATEGORY(FILTER_WIDGET_TRACE, "fy.trace.filters.widget", QtInfoMsg)
 
 using namespace Qt::StringLiterals;
 
-constexpr auto FilterDoubleClickKey            = u"Filters/DoubleClickBehaviour";
-constexpr auto FilterMiddleClickKey            = u"Filters/MiddleClickBehaviour";
-constexpr auto FilterPlaylistEnabledKey        = u"Filters/SelectionPlaylistEnabled";
-constexpr auto FilterAutoSwitchKey             = u"Filters/AutoSwitchSelectionPlaylist";
-constexpr auto FilterAutoPlaylistKey           = u"Filters/SelectionPlaylistName";
-constexpr auto FilterRestoreStateKey           = u"Filters/RestoreState";
-constexpr auto FilterRowHeightKey              = u"Filters/RowHeight";
-constexpr auto FilterSendPlaybackKey           = u"Filters/StartPlaybackOnSend";
-constexpr auto FilterSourceKey                 = u"Filters/Source";
-constexpr auto FilterKeepAliveKey              = u"Filters/KeepAlive";
-constexpr auto FilterIconSizeKey               = u"Filters/IconSize";
-constexpr auto FilterAutoFitArtworkKey         = u"Filters/AutoFitArtwork";
-constexpr auto FilterIconHorizontalGapKey      = u"Filters/IconHorizontalGap";
-constexpr auto FilterIconVerticalGapKey        = u"Filters/IconVerticalGap";
-constexpr auto FilterArtworkRadiusKey          = u"Filters/ArtworkCornerRadius";
-constexpr auto FilterOverrideArtworkMarginsKey = u"Filters/OverrideArtworkMargins";
-constexpr auto FilterArtworkMarginsKey         = u"Filters/ArtworkMargins";
-constexpr auto FilterOverrideGridMarginsKey    = u"Filters/OverrideGridMargins";
-constexpr auto FilterGridMarginsKey            = u"Filters/GridMargins";
+constexpr auto FilterDoubleClickKey               = u"Filters/DoubleClickBehaviour";
+constexpr auto FilterMiddleClickKey               = u"Filters/MiddleClickBehaviour";
+constexpr auto FilterPlaylistEnabledKey           = u"Filters/SelectionPlaylistEnabled";
+constexpr auto FilterAutoSwitchKey                = u"Filters/AutoSwitchSelectionPlaylist";
+constexpr auto FilterAutoPlaylistKey              = u"Filters/SelectionPlaylistName";
+constexpr auto FilterRestoreStateKey              = u"Filters/RestoreState";
+constexpr auto FilterRowHeightKey                 = u"Filters/RowHeight";
+constexpr auto FilterSendPlaybackKey              = u"Filters/StartPlaybackOnSend";
+constexpr auto FilterSourceKey                    = u"Filters/Source";
+constexpr auto FilterKeepAliveKey                 = u"Filters/KeepAlive";
+constexpr auto FilterIconSizeKey                  = u"Filters/IconSize";
+constexpr auto FilterAutoFitArtworkKey            = u"Filters/AutoFitArtwork";
+constexpr auto FilterArtworkScalingKey            = u"Filters/ArtworkScaling";
+constexpr auto FilterIconHorizontalGapKey         = u"Filters/IconHorizontalGap";
+constexpr auto FilterIconVerticalGapKey           = u"Filters/IconVerticalGap";
+constexpr auto FilterArtworkRadiusKey             = u"Filters/ArtworkCornerRadius";
+constexpr auto FilterArtworkHoverFrameKey         = u"Filters/ArtworkHoverFrame";
+constexpr auto FilterArtworkSelectionFrameKey     = u"Filters/ArtworkSelectionFrame";
+constexpr auto FilterHighlightHoveredCaptionsKey  = u"Filters/HighlightHoveredCaptions";
+constexpr auto FilterHighlightSelectedCaptionsKey = u"Filters/HighlightSelectedCaptions";
+constexpr auto FilterOverlayCaptionsKey           = u"Filters/OverlayCaptionsOnInteraction";
+constexpr auto FilterOverrideArtworkMarginsKey    = u"Filters/OverrideArtworkMargins";
+constexpr auto FilterArtworkMarginsKey            = u"Filters/ArtworkMargins";
+constexpr auto FilterOverrideGridMarginsKey       = u"Filters/OverrideGridMargins";
+constexpr auto FilterGridMarginsKey               = u"Filters/GridMargins";
 
 constexpr auto FilterExpandGroupsKey                = u"Filters/ExpandGroups";
+constexpr auto FilterExpansionPositionKey           = u"Filters/ExpansionPosition";
 constexpr auto FilterExpansionAnimatedKey           = u"Filters/ExpansionAnimated";
 constexpr auto FilterExpansionAnimationDurationKey  = u"Filters/ExpansionAnimationDuration";
 constexpr auto FilterExpansionAlternatingRowsKey    = u"Filters/ExpansionAlternatingRows";
@@ -135,6 +142,22 @@ constexpr int FilterModelPinUpdateDelay = 50;
 
 namespace Fooyin::Filters {
 namespace {
+void loadArtworkFrame(const QJsonObject& object, ArtworkFrame& frame)
+{
+    frame.enabled = object.value("Enabled"_L1).toBool(frame.enabled);
+    frame.width   = std::clamp(object.value("Width"_L1).toInt(frame.width), 1, 20);
+    if(object.contains("Colour"_L1)) {
+        frame.colour = QColor{object.value("Colour"_L1).toString()};
+    }
+}
+
+QJsonObject artworkFrameToJson(const ArtworkFrame& frame)
+{
+    return {{"Enabled"_L1, frame.enabled},
+            {"Width"_L1, frame.width},
+            {"Colour"_L1, frame.colour.isValid() ? frame.colour.name(QColor::HexArgb) : QString{}}};
+}
+
 QString normaliseColour(const QString& value)
 {
     const QColor colour{value};
@@ -648,15 +671,27 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
     config.autoSwitch      = m_settings->fileValue(FilterAutoSwitchKey, config.autoSwitch).toBool();
     config.preservePlaybackPlaylist
         = m_settings->fileValue(FilterKeepAliveKey, config.preservePlaybackPlaylist).toBool();
-    config.playlistName        = m_settings->fileValue(FilterAutoPlaylistKey, config.playlistName).toString();
-    config.restoreState        = m_settings->fileValue(FilterRestoreStateKey, config.restoreState).toBool();
-    config.rowHeight           = m_settings->fileValue(FilterRowHeightKey, config.rowHeight).toInt();
-    config.iconSize            = m_settings->fileValue(FilterIconSizeKey, config.iconSize).toSize();
-    config.autoFitArtwork      = m_settings->fileValue(FilterAutoFitArtworkKey, config.autoFitArtwork).toBool();
+    config.playlistName   = m_settings->fileValue(FilterAutoPlaylistKey, config.playlistName).toString();
+    config.restoreState   = m_settings->fileValue(FilterRestoreStateKey, config.restoreState).toBool();
+    config.rowHeight      = m_settings->fileValue(FilterRowHeightKey, config.rowHeight).toInt();
+    config.iconSize       = m_settings->fileValue(FilterIconSizeKey, config.iconSize).toSize();
+    config.autoFitArtwork = m_settings->fileValue(FilterAutoFitArtworkKey, config.autoFitArtwork).toBool();
+    config.artworkScaling = artworkScalingFromInt(
+        m_settings->fileValue(FilterArtworkScalingKey, static_cast<int>(config.artworkScaling)).toInt());
     config.iconHorizontalGap   = m_settings->fileValue(FilterIconHorizontalGapKey, config.iconHorizontalGap).toInt();
     config.iconVerticalGap     = m_settings->fileValue(FilterIconVerticalGapKey, config.iconVerticalGap).toInt();
     config.artworkCornerRadius = m_settings->fileValue(FilterArtworkRadiusKey, config.artworkCornerRadius).toInt();
-    config.artworkMargins      = Gui::marginsFromJson(
+    loadArtworkFrame(QJsonObject::fromVariantMap(m_settings->fileValue(FilterArtworkHoverFrameKey).toMap()),
+                     config.artworkHoverFrame);
+    loadArtworkFrame(QJsonObject::fromVariantMap(m_settings->fileValue(FilterArtworkSelectionFrameKey).toMap()),
+                     config.artworkSelectionFrame);
+    config.highlightHoveredCaptions
+        = m_settings->fileValue(FilterHighlightHoveredCaptionsKey, config.highlightHoveredCaptions).toBool();
+    config.highlightSelectedCaptions
+        = m_settings->fileValue(FilterHighlightSelectedCaptionsKey, config.highlightSelectedCaptions).toBool();
+    config.overlayCaptionsOnInteraction
+        = m_settings->fileValue(FilterOverlayCaptionsKey, config.overlayCaptionsOnInteraction).toBool();
+    config.artworkMargins = Gui::marginsFromJson(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterArtworkMarginsKey).toMap()), config.artworkMargins);
     config.overrideArtworkMargins
         = m_settings
@@ -667,6 +702,8 @@ FilterWidget::ConfigData FilterWidget::defaultConfig() const
     config.gridMargins = Gui::marginsFromJson(
         QJsonObject::fromVariantMap(m_settings->fileValue(FilterGridMarginsKey).toMap()), config.gridMargins);
     config.expandGroups      = m_settings->fileValue(FilterExpandGroupsKey, config.expandGroups).toBool();
+    config.expansionPosition = static_cast<ExpandedTreeView::ExpansionPosition>(std::clamp(
+        m_settings->fileValue(FilterExpansionPositionKey, static_cast<int>(config.expansionPosition)).toInt(), 0, 2));
     config.expansionAnimated = m_settings->fileValue(FilterExpansionAnimatedKey, config.expansionAnimated).toBool();
     config.expansionAnimationDuration = std::clamp(
         m_settings->fileValue(FilterExpansionAnimationDurationKey, config.expansionAnimationDuration).toInt(), 50,
@@ -758,15 +795,23 @@ void FilterWidget::saveDefaults(const ConfigData& config) const
     m_settings->fileSet(FilterRowHeightKey, config.rowHeight);
     m_settings->fileSet(FilterIconSizeKey, config.iconSize);
     m_settings->fileSet(FilterAutoFitArtworkKey, config.autoFitArtwork);
+    m_settings->fileSet(FilterArtworkScalingKey, static_cast<int>(config.artworkScaling));
     m_settings->fileSet(FilterIconHorizontalGapKey, config.iconHorizontalGap);
     m_settings->fileSet(FilterIconVerticalGapKey, config.iconVerticalGap);
     m_settings->fileSet(FilterArtworkRadiusKey, config.artworkCornerRadius);
+    m_settings->fileSet(FilterArtworkHoverFrameKey, artworkFrameToJson(config.artworkHoverFrame).toVariantMap());
+    m_settings->fileSet(FilterArtworkSelectionFrameKey,
+                        artworkFrameToJson(config.artworkSelectionFrame).toVariantMap());
+    m_settings->fileSet(FilterHighlightHoveredCaptionsKey, config.highlightHoveredCaptions);
+    m_settings->fileSet(FilterHighlightSelectedCaptionsKey, config.highlightSelectedCaptions);
+    m_settings->fileSet(FilterOverlayCaptionsKey, config.overlayCaptionsOnInteraction);
     m_settings->fileSet(FilterOverrideArtworkMarginsKey, config.overrideArtworkMargins);
     m_settings->fileSet(FilterArtworkMarginsKey, Gui::marginsToJson(config.artworkMargins).toVariantMap());
     m_settings->fileSet(FilterOverrideGridMarginsKey, config.overrideGridMargins);
     m_settings->fileSet(FilterGridMarginsKey, Gui::marginsToJson(config.gridMargins).toVariantMap());
     m_settings->fileSet(FilterExpandGroupsKey, config.expandGroups);
     m_settings->fileSet(FilterExpansionAnimatedKey, config.expansionAnimated);
+    m_settings->fileSet(FilterExpansionPositionKey, static_cast<int>(config.expansionPosition));
     m_settings->fileSet(FilterExpansionAnimationDurationKey, config.expansionAnimationDuration);
     m_settings->fileSet(FilterExpansionAlternatingRowsKey, config.expansionAlternatingRows);
     m_settings->fileSet(FilterExpansionMatchGridMarginsKey, config.expansionMatchGridMargins);
@@ -825,15 +870,22 @@ void FilterWidget::clearSavedDefaults() const
     m_settings->fileRemove(FilterRowHeightKey);
     m_settings->fileRemove(FilterIconSizeKey);
     m_settings->fileRemove(FilterAutoFitArtworkKey);
+    m_settings->fileRemove(FilterArtworkScalingKey);
     m_settings->fileRemove(FilterIconHorizontalGapKey);
     m_settings->fileRemove(FilterIconVerticalGapKey);
     m_settings->fileRemove(FilterArtworkRadiusKey);
+    m_settings->fileRemove(FilterArtworkHoverFrameKey);
+    m_settings->fileRemove(FilterArtworkSelectionFrameKey);
+    m_settings->fileRemove(FilterHighlightHoveredCaptionsKey);
+    m_settings->fileRemove(FilterHighlightSelectedCaptionsKey);
+    m_settings->fileRemove(FilterOverlayCaptionsKey);
     m_settings->fileRemove(FilterOverrideArtworkMarginsKey);
     m_settings->fileRemove(FilterArtworkMarginsKey);
     m_settings->fileRemove(FilterOverrideGridMarginsKey);
     m_settings->fileRemove(FilterGridMarginsKey);
     m_settings->fileRemove(FilterExpandGroupsKey);
     m_settings->fileRemove(FilterExpansionAnimatedKey);
+    m_settings->fileRemove(FilterExpansionPositionKey);
     m_settings->fileRemove(FilterExpansionAnimationDurationKey);
     m_settings->fileRemove(FilterExpansionAlternatingRowsKey);
     m_settings->fileRemove(FilterExpansionMatchGridMarginsKey);
@@ -872,6 +924,9 @@ void FilterWidget::applyConfig(const ConfigData& config)
 {
     auto validated{config};
 
+    validated.coverFlow.frameWidth
+        = std::max(validated.artworkHoverFrame.enabled ? validated.artworkHoverFrame.width : 0,
+                   validated.artworkSelectionFrame.enabled ? validated.artworkSelectionFrame.width : 0);
     validated.coverFlow.normalise();
     validated.background.normalise();
     validated.expansionBackground.normalise();
@@ -881,6 +936,15 @@ void FilterWidget::applyConfig(const ConfigData& config)
 
     if(validated.source != FilterSource::Library && validated.source != FilterSource::CurrentPlaylist) {
         validated.source = FilterSource::Library;
+    }
+    if(validated.source == FilterSource::CurrentPlaylist) {
+        for(auto* action : {&validated.doubleClickAction, &validated.middleClickAction,
+                            &validated.expansionDoubleClickAction, &validated.expansionMiddleClickAction}) {
+            if(*action == static_cast<int>(TrackAction::PlayResultsPlaylist)
+               || *action == static_cast<int>(TrackAction::ReplaceResultsPlaylist)) {
+                *action = static_cast<int>(TrackAction::Play);
+            }
+        }
     }
     if(validated.viewMode != ExpandedTreeView::ViewMode::Tree && validated.viewMode != ExpandedTreeView::ViewMode::Icon
        && validated.viewMode != ExpandedTreeView::ViewMode::CoverFlow) {
@@ -901,20 +965,33 @@ void FilterWidget::applyConfig(const ConfigData& config)
         validated.coverSource.reset();
     }
 
-    validated.rowHeight           = std::max(validated.rowHeight, 0);
-    validated.iconHorizontalGap   = std::max(validated.iconHorizontalGap, -1);
-    validated.iconVerticalGap     = std::max(validated.iconVerticalGap, 0);
-    validated.artworkCornerRadius = std::clamp(validated.artworkCornerRadius, 0, 100);
-    validated.artworkMargins      = Gui::marginsFromJson({}, validated.artworkMargins);
-    validated.gridMargins         = Gui::marginsFromJson({}, validated.gridMargins);
+    validated.rowHeight                   = std::max(validated.rowHeight, 0);
+    validated.iconHorizontalGap           = std::max(validated.iconHorizontalGap, -1);
+    validated.iconVerticalGap             = std::max(validated.iconVerticalGap, 0);
+    validated.artworkCornerRadius         = std::clamp(validated.artworkCornerRadius, 0, 100);
+    validated.artworkHoverFrame.width     = std::clamp(validated.artworkHoverFrame.width, 1, 20);
+    validated.artworkSelectionFrame.width = std::clamp(validated.artworkSelectionFrame.width, 1, 20);
+    validated.artworkScaling              = artworkScalingFromInt(static_cast<int>(validated.artworkScaling));
+    validated.artworkMargins              = Gui::marginsFromJson({}, validated.artworkMargins);
+    validated.gridMargins                 = Gui::marginsFromJson({}, validated.gridMargins);
 
     if(!validated.iconSize.isValid()) {
         validated.iconSize = factoryConfig().iconSize;
     }
-    const int minIconSize = Constants::minimumIconSize(validated.viewMode, validated.captionDisplay);
+    const auto captions
+        = validated.captionDisplay == ExpandedTreeView::CaptionDisplay::None && validated.overlayCaptionsOnInteraction
+            ? ExpandedTreeView::CaptionDisplay::Overlay
+            : validated.captionDisplay;
+    const int minIconSize = Constants::minimumIconSize(validated.viewMode, captions);
     const int maxIconSize = Constants::maximumIconSize(validated.viewMode);
     validated.iconSize
         = validated.iconSize.expandedTo({minIconSize, minIconSize}).boundedTo({maxIconSize, maxIconSize});
+
+    if(validated.expansionPosition != ExpandedTreeView::ExpansionPosition::Below
+       && validated.expansionPosition != ExpandedTreeView::ExpansionPosition::Above
+       && validated.expansionPosition != ExpandedTreeView::ExpansionPosition::Automatic) {
+        validated.expansionPosition = ExpandedTreeView::ExpansionPosition::Below;
+    }
 
     validated.expansionAnimationDuration        = std::clamp(validated.expansionAnimationDuration, 50, 2000);
     validated.expansionArtworkMargins           = Gui::marginsFromJson({}, validated.expansionArtworkMargins);
@@ -928,6 +1005,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
 
     const bool appearanceChanged
         = m_config.viewMode != validated.viewMode || m_config.captionDisplay != validated.captionDisplay
+       || m_config.overlayCaptionsOnInteraction != validated.overlayCaptionsOnInteraction
        || m_config.coverType != validated.coverType || m_config.coverSource != validated.coverSource
        || m_config.showSummary != validated.showSummary || m_config.showHeader != validated.showHeader
        || m_config.showScrollbar != validated.showScrollbar || m_config.alternatingRows != validated.alternatingRows;
@@ -959,14 +1037,20 @@ void FilterWidget::applyConfig(const ConfigData& config)
        || m_config.preservePlaybackPlaylist != validated.preservePlaybackPlaylist
        || m_config.playlistName != validated.playlistName || m_config.restoreState != validated.restoreState
        || m_config.rowHeight != validated.rowHeight || m_config.iconSize != validated.iconSize
-       || m_config.autoFitArtwork != validated.autoFitArtwork
+       || m_config.autoFitArtwork != validated.autoFitArtwork || m_config.artworkScaling != validated.artworkScaling
        || m_config.iconHorizontalGap != validated.iconHorizontalGap
        || m_config.iconVerticalGap != validated.iconVerticalGap
        || m_config.overrideGridMargins != validated.overrideGridMargins || m_config.gridMargins != validated.gridMargins
        || m_config.artworkCornerRadius != validated.artworkCornerRadius
+       || m_config.artworkHoverFrame != validated.artworkHoverFrame
+       || m_config.artworkSelectionFrame != validated.artworkSelectionFrame
+       || m_config.highlightHoveredCaptions != validated.highlightHoveredCaptions
+       || m_config.highlightSelectedCaptions != validated.highlightSelectedCaptions
+       || m_config.overlayCaptionsOnInteraction != validated.overlayCaptionsOnInteraction
        || m_config.overrideArtworkMargins != validated.overrideArtworkMargins
        || m_config.artworkMargins != validated.artworkMargins || m_config.expandGroups != validated.expandGroups
        || m_config.expansionAnimated != validated.expansionAnimated
+       || m_config.expansionPosition != validated.expansionPosition
        || m_config.expansionAnimationDuration != validated.expansionAnimationDuration
        || m_config.expandedArtwork != validated.expandedArtwork
        || m_config.expansionScripts != validated.expansionScripts
@@ -993,6 +1077,7 @@ void FilterWidget::applyConfig(const ConfigData& config)
     m_header->setCollapsed(!m_config.showHeader);
     m_view->setCollapseDelayEnabled(doubleClickAction() != TrackAction::None);
     m_view->setExpansionAnimated(m_config.expansionAnimated);
+    m_view->setExpansionPosition(m_config.expansionPosition);
     m_view->setExpansionAnimationDuration(m_config.expansionAnimationDuration);
     m_view->setExpansionMatchGridMargins(m_config.expansionMatchGridMargins);
     m_view->setBackgroundConfig(m_config.background);
@@ -1024,6 +1109,9 @@ void FilterWidget::applyConfig(const ConfigData& config)
     }
 
     m_delegate->setArtworkCornerRadius(m_config.artworkCornerRadius);
+    m_delegate->setArtworkScaling(m_config.artworkScaling);
+    m_delegate->setArtworkFrames(m_config.artworkHoverFrame, m_config.artworkSelectionFrame);
+    m_delegate->setCaptionHighlighting(m_config.highlightHoveredCaptions, m_config.highlightSelectedCaptions);
     updateArtworkMargins();
     m_view->changeIconSize(m_config.iconSize);
     m_model->setIconSize(m_view->effectiveIconSize());
@@ -1083,12 +1171,22 @@ FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layou
     if(layout.contains("IconWidth"_L1) && layout.contains("IconHeight"_L1)) {
         config.iconSize = {layout.value("IconWidth"_L1).toInt(), layout.value("IconHeight"_L1).toInt()};
     }
-    config.iconHorizontalGap   = layout.value("IconHorizontalGap"_L1).toInt(config.iconHorizontalGap);
-    config.autoFitArtwork      = layout.value("AutoFitArtwork"_L1).toBool(config.autoFitArtwork);
+    config.iconHorizontalGap = layout.value("IconHorizontalGap"_L1).toInt(config.iconHorizontalGap);
+    config.autoFitArtwork    = layout.value("AutoFitArtwork"_L1).toBool(config.autoFitArtwork);
+    config.artworkScaling
+        = artworkScalingFromInt(layout.value("ArtworkScaling"_L1).toInt(static_cast<int>(config.artworkScaling)));
     config.iconVerticalGap     = layout.value("IconVerticalGap"_L1).toInt(config.iconVerticalGap);
     config.overrideGridMargins = layout.value("OverrideGridMargins"_L1).toBool(config.overrideGridMargins);
     config.gridMargins         = Gui::marginsFromJson(layout.value("GridMargins"_L1).toObject(), config.gridMargins);
     config.artworkCornerRadius = layout.value("ArtworkCornerRadius"_L1).toInt(config.artworkCornerRadius);
+    loadArtworkFrame(layout.value("ArtworkHoverFrame"_L1).toObject(), config.artworkHoverFrame);
+    loadArtworkFrame(layout.value("ArtworkSelectionFrame"_L1).toObject(), config.artworkSelectionFrame);
+    config.highlightHoveredCaptions
+        = layout.value("HighlightHoveredCaptions"_L1).toBool(config.highlightHoveredCaptions);
+    config.highlightSelectedCaptions
+        = layout.value("HighlightSelectedCaptions"_L1).toBool(config.highlightSelectedCaptions);
+    config.overlayCaptionsOnInteraction
+        = layout.value("OverlayCaptionsOnInteraction"_L1).toBool(config.overlayCaptionsOnInteraction);
     config.artworkMargins = Gui::marginsFromJson(layout.value("ArtworkMargins"_L1).toObject(), config.artworkMargins);
     config.overrideArtworkMargins
         = layout.value("OverrideArtworkMargins"_L1)
@@ -1129,6 +1227,8 @@ FilterWidget::ConfigData FilterWidget::configFromLayout(const QJsonObject& layou
         = layout.value("ExpansionPlayingRowColour"_L1).toString(config.expansionPlayingRowColour);
     config.expandGroups      = layout.value("ExpandGroups"_L1).toBool(config.expandGroups);
     config.expansionAnimated = layout.value("ExpansionAnimated"_L1).toBool(config.expansionAnimated);
+    config.expansionPosition = static_cast<ExpandedTreeView::ExpansionPosition>(
+        std::clamp(layout.value("ExpansionPosition"_L1).toInt(static_cast<int>(config.expansionPosition)), 0, 2));
     config.expansionAnimationDuration
         = std::clamp(layout.value("ExpansionAnimationDuration"_L1).toInt(config.expansionAnimationDuration), 50, 2000);
     config.expandedArtwork     = layout.value("ExpandedArtwork"_L1).toBool(config.expandedArtwork);
@@ -1182,14 +1282,21 @@ void FilterWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& lay
     layout["IconHeight"_L1]                        = config.iconSize.height();
     layout["IconHorizontalGap"_L1]                 = config.iconHorizontalGap;
     layout["AutoFitArtwork"_L1]                    = config.autoFitArtwork;
+    layout["ArtworkScaling"_L1]                    = static_cast<int>(config.artworkScaling);
     layout["IconVerticalGap"_L1]                   = config.iconVerticalGap;
     layout["OverrideGridMargins"_L1]               = config.overrideGridMargins;
     layout["GridMargins"_L1]                       = Gui::marginsToJson(config.gridMargins);
     layout["ArtworkCornerRadius"_L1]               = config.artworkCornerRadius;
+    layout["ArtworkHoverFrame"_L1]                 = artworkFrameToJson(config.artworkHoverFrame);
+    layout["ArtworkSelectionFrame"_L1]             = artworkFrameToJson(config.artworkSelectionFrame);
+    layout["HighlightHoveredCaptions"_L1]          = config.highlightHoveredCaptions;
+    layout["HighlightSelectedCaptions"_L1]         = config.highlightSelectedCaptions;
+    layout["OverlayCaptionsOnInteraction"_L1]      = config.overlayCaptionsOnInteraction;
     layout["OverrideArtworkMargins"_L1]            = config.overrideArtworkMargins;
     layout["ArtworkMargins"_L1]                    = Gui::marginsToJson(config.artworkMargins);
     layout["ExpandGroups"_L1]                      = config.expandGroups;
     layout["ExpansionAnimated"_L1]                 = config.expansionAnimated;
+    layout["ExpansionPosition"_L1]                 = static_cast<int>(config.expansionPosition);
     layout["ExpansionAnimationDuration"_L1]        = config.expansionAnimationDuration;
     layout["ExpansionAlternatingRows"_L1]          = config.expansionAlternatingRows;
     layout["ExpansionMatchGridMargins"_L1]         = config.expansionMatchGridMargins;
@@ -1558,11 +1665,18 @@ void FilterWidget::updateViewMode(ExpandedTreeView::ViewMode mode)
 
 void FilterWidget::updateCaptions(ExpandedTreeView::CaptionDisplay captions)
 {
+    const bool contextualOverlay = m_view->viewMode() == ExpandedTreeView::ViewMode::Icon
+                                && captions == ExpandedTreeView::CaptionDisplay::None
+                                && m_config.overlayCaptionsOnInteraction;
     if(m_view->viewMode() == ExpandedTreeView::ViewMode::CoverFlow) {
         captions = ExpandedTreeView::CaptionDisplay::Bottom;
     }
+    else if(contextualOverlay) {
+        captions = ExpandedTreeView::CaptionDisplay::Overlay;
+    }
     m_model->setShowLabels(captions != ExpandedTreeView::CaptionDisplay::None);
     m_view->setCaptionDisplay(captions);
+    m_view->setOverlayCaptionsOnInteraction(contextualOverlay);
 }
 
 void FilterWidget::updateArtworkMargins()
@@ -1897,14 +2011,17 @@ void FilterWidget::applyExpansionContent(const ExpansionResult& result)
         if(m_pendingScrollPosition >= 0) {
             restoreScrollPosition();
         }
-        else if(changed) {
+        else if(changed && m_expansion->isVisible()) {
             const QRect iconRect     = m_view->visualRect(index);
             const int viewportHeight = m_view->viewport()->height();
             const int bottom         = m_expansion->y() + m_expansion->height();
             const int topMargin      = m_view->iconScrollTopMargin(index);
-            // Keep the selected icon and its top spacing visible while showing the expansion
-            const int scroll = std::clamp(bottom - viewportHeight, 0, std::max(0, iconRect.top() - topMargin));
-            if(scroll > 0) {
+            // Keep the selected icon visible while revealing the expansion on either side
+            const int scroll
+                = m_expansion->property("expansionAbove").toBool()
+                    ? std::clamp(m_expansion->y(), -std::max(0, viewportHeight - iconRect.bottom() - 1 - topMargin), 0)
+                    : std::clamp(bottom - viewportHeight, 0, std::max(0, iconRect.top() - topMargin));
+            if(scroll != 0) {
                 auto* bar = m_view->verticalScrollBar();
                 bar->setValue(bar->value() + scroll);
             }
@@ -2075,7 +2192,7 @@ void FilterWidget::addDisplayMenu(QMenu* menu)
     sourceDefault->setCheckable(true);
 
     const auto currentMode     = m_view->viewMode();
-    const auto currentCaptions = m_view->captionDisplay();
+    const auto currentCaptions = m_config.captionDisplay;
     const auto currentType     = m_model->coverType();
     const auto currentSource   = m_model->coverSource();
 

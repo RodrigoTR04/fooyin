@@ -142,19 +142,6 @@ struct OutputStats
     std::function<void()> disconnectEmitter;
 };
 
-QCoreApplication* ensureCoreApplication()
-{
-    if(auto* app = QCoreApplication::instance()) {
-        return app;
-    }
-
-    static int argc{1};
-    static char appName[] = "fooyin-audioengine-test";
-    static char* argv[]   = {appName, nullptr};
-    static QCoreApplication app{argc, argv};
-    return &app;
-}
-
 bool pumpUntil(const std::function<bool()>& predicate, std::chrono::milliseconds timeout = 2000ms)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -726,6 +713,11 @@ public:
         return engine.m_currentTrackItemId;
     }
 
+    static AudioStreamPtr activeStream(const AudioEngine& engine)
+    {
+        return engine.m_decoder.activeStream();
+    }
+
     static uint64_t trackGeneration(const AudioEngine& engine)
     {
         return engine.m_trackGeneration;
@@ -832,7 +824,6 @@ public:
 
 FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, SameAlbumPolicyUsesGroupingScriptForAutomaticCrossfade)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Engine::CrossfadingValues crossfadingValues;
@@ -889,7 +880,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, SameAlbumPolicyUsesGroupingScri
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, LoadTrackFullReinitInitialisesDecoderAndOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"full-reinit.fyt"_s, 0, 100000);
@@ -968,7 +958,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, DecoderContextQueuesTimedTrackC
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ContiguousSegmentSwitchDoesNotReinitDecoderOrOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     Track firstTrack = harness.createTrack(u"segments.fyt"_s, 0, 100000);
@@ -1000,7 +989,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ContiguousSegmentSwitchDoesNo
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekAfterContiguousSegmentSwitchPublishesTargetPosition)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     Track firstTrack = harness.createTrack(u"segments-seek.fyt"_s, 0, 10000);
@@ -1038,7 +1026,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekAfterContiguousSegmentSwi
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PlayPauseStopWithFadeCompletesStateTransitions)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = harness.createTrack(u"fade-smoke.fyt"_s, 0, 100000);
@@ -1061,12 +1048,136 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PlayPauseStopWithFadeComplete
     EXPECT_GE(harness.outputStats->uninitCalls.load(), 1);
     EXPECT_EQ(harness.engine.trackStatus(), Engine::TrackStatus::NoTrack);
     EXPECT_TRUE(pumpUntil([&harness]() { return harness.engine.position() == 0; }, 1000ms));
-    EXPECT_EQ(harness.engine.position(), 0U);
+    EXPECT_EQ(harness.engine.position(), 0);
+}
+
+FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PauseFadeCompletesWhenInputEnds)
+{
+    EngineHarness harness{/*enablePauseStopFade=*/true};
+
+    harness.decoderStats->sourceEndMs.store(400, std::memory_order_relaxed);
+    harness.outputStats->setOutputState(0, 0, 0);
+    AudioEngineTestAccessor::setPauseFadeDuration(harness.engine, 1000);
+
+    const Track shortTrack = harness.createTrack(u"fade-short-tail.fyt"_s, 0, 400);
+    harness.engine.loadTrack(makePlaybackItem(shortTrack, 1), false);
+    ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.trackStatus() == Engine::TrackStatus::Loaded; }));
+    harness.engine.play();
+
+    const QSignalSpy pauseCompletedSpy{&harness.engine, &AudioEngine::audiblePauseDrainCompleted};
+    const int resetCallsBeforePause = harness.outputStats->resetCalls.load();
+    harness.engine.pause();
+    ASSERT_EQ(AudioEngineTestAccessor::playbackPhase(harness.engine), Playback::Phase::FadingToPause);
+
+    harness.outputStats->setOutputState(256, 256, 120);
+    ASSERT_TRUE(
+        pumpUntil([&harness]() { return harness.engine.playbackState() == Engine::PlaybackState::Paused; }, 3000ms));
+    EXPECT_TRUE(pauseCompletedSpy.empty());
+
+    harness.outputStats->setOutputState(256, 0, 0);
+    ASSERT_TRUE(pumpUntil([&pauseCompletedSpy]() { return pauseCompletedSpy.count() == 1; }));
+    EXPECT_EQ(harness.outputStats->resetCalls.load(), resetCallsBeforePause);
+    EXPECT_EQ(harness.engine.playbackState(), Engine::PlaybackState::Paused);
+}
+
+FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, StopFadeCompletesWhenInputEnds)
+{
+    EngineHarness harness{/*enablePauseStopFade=*/true};
+
+    harness.decoderStats->sourceEndMs.store(400, std::memory_order_relaxed);
+    harness.outputStats->setOutputState(0, 0, 0);
+
+    auto fadingValues = harness.settings.value<Settings::Core::Internal::FadingValues>().value<Engine::FadingValues>();
+    fadingValues.stop.out = 1000;
+    harness.settings.set<Settings::Core::Internal::FadingValues>(QVariant::fromValue(fadingValues));
+
+    const Track shortTrack = harness.createTrack(u"stop-fade-short-tail.fyt"_s, 0, 400);
+    harness.engine.loadTrack(makePlaybackItem(shortTrack, 1), false);
+    ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.trackStatus() == Engine::TrackStatus::Loaded; }));
+    harness.engine.play();
+
+    const QSignalSpy finishedSpy{&harness.engine, &AudioEngine::finished};
+    harness.engine.stop();
+    ASSERT_EQ(AudioEngineTestAccessor::playbackPhase(harness.engine), Playback::Phase::FadingToStop);
+
+    harness.outputStats->setOutputState(256, 0, 0);
+    ASSERT_TRUE(
+        pumpUntil([&harness]() { return harness.engine.playbackState() == Engine::PlaybackState::Stopped; }, 3000ms));
+    EXPECT_EQ(finishedSpy.count(), 1);
+    EXPECT_EQ(harness.engine.trackStatus(), Engine::TrackStatus::NoTrack);
+    EXPECT_EQ(harness.engine.position(), 0);
+}
+
+FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekAfterEndOfInputRestoresPlaybackAndAllowsStop)
+{
+    EngineHarness harness{/*enablePauseStopFade=*/true};
+    harness.decoderStats->sourceEndMs.store(400, std::memory_order_relaxed);
+
+    auto fadingValues = harness.settings.value<Settings::Core::Internal::FadingValues>().value<Engine::FadingValues>();
+    fadingValues.pause.out = 0;
+    fadingValues.pause.in  = 0;
+    fadingValues.stop.out  = 1000;
+    harness.settings.set<Settings::Core::Internal::FadingValues>(QVariant::fromValue(fadingValues));
+
+    const Track track = harness.createTrack(u"seek-after-eof.fyt"_s, 0, 400);
+    harness.engine.loadTrack(makePlaybackItem(track, 1), false);
+    ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.trackStatus() == Engine::TrackStatus::Loaded; }));
+    harness.engine.play();
+    ASSERT_TRUE(pumpUntil([&harness]() {
+        const auto stream = AudioEngineTestAccessor::activeStream(harness.engine);
+        return harness.engine.trackStatus() == Engine::TrackStatus::End && stream
+            && stream->state() == AudioStream::State::Stopped;
+    }));
+
+    harness.engine.pause();
+    ASSERT_EQ(harness.engine.playbackState(), Engine::PlaybackState::Paused);
+
+    harness.outputStats->setOutputState(0, 0, 0);
+    harness.engine.seek(0);
+    harness.engine.play();
+    ASSERT_EQ(harness.engine.playbackState(), Engine::PlaybackState::Playing);
+
+    const int writeCallsBeforeResume = harness.outputStats->writeCalls.load();
+    const QSignalSpy finishedSpy{&harness.engine, &AudioEngine::finished};
+    harness.engine.stop();
+    ASSERT_EQ(AudioEngineTestAccessor::playbackPhase(harness.engine), Playback::Phase::FadingToStop);
+
+    harness.outputStats->setOutputState(256, 0, 0);
+    ASSERT_TRUE(
+        pumpUntil([&harness]() { return harness.engine.playbackState() == Engine::PlaybackState::Stopped; }, 3000ms));
+    EXPECT_GT(harness.outputStats->writeCalls.load(), writeCallsBeforeResume);
+    EXPECT_EQ(finishedSpy.count(), 1);
+    EXPECT_EQ(harness.engine.trackStatus(), Engine::TrackStatus::NoTrack);
+    EXPECT_EQ(harness.engine.position(), 0);
+}
+
+FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, PauseWhileRemoteBufferingCompletesWithoutWaitingForFade)
+{
+    EngineHarness harness{/*enablePauseStopFade=*/true};
+
+    const Track track = makeRemoteTrack(u"https://example.test/stalled-stream.fyt"_s, 0);
+    harness.engine.loadTrack(makePlaybackItem(track, 1), false);
+    ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.trackStatus() == Engine::TrackStatus::Loaded; }));
+
+    harness.engine.play();
+    ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.playbackState() == Engine::PlaybackState::Playing; }));
+
+    AudioEngineTestAccessor::setPauseFadeDuration(harness.engine, 1000);
+    harness.outputStats->setOutputState(0, 0, 0);
+    AudioEngineTestAccessor::enterRemoteBufferingWithLongStopFade(harness.engine);
+    const QSignalSpy pauseCompletedSpy{&harness.engine, &AudioEngine::audiblePauseDrainCompleted};
+    harness.engine.pause();
+
+    ASSERT_TRUE(pumpUntil([&pauseCompletedSpy]() { return pauseCompletedSpy.count() == 1; }, 500ms));
+    EXPECT_EQ(harness.engine.playbackState(), Engine::PlaybackState::Paused);
+    EXPECT_FALSE(AudioEngineTestAccessor::inputBufferingActive(harness.engine));
+
+    harness.engine.play();
+    ASSERT_EQ(harness.engine.playbackState(), Engine::PlaybackState::Playing);
 }
 
 FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, StopWhileRemoteBufferingStopsDecoderWithoutWaitingForFade)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = makeRemoteTrack(u"https://example.test/stalled-stream.fyt"_s, 0);
@@ -1088,7 +1199,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, StopWhileRemoteBufferingStopsDe
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PauseDoesNotResetOutputQueue)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"pause-preserves-output.fyt"_s, 0, 100000);
@@ -1109,7 +1219,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PauseDoesNotResetOutputQueue)
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseDoesNotResetOutputQueueAfterDrain)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = harness.createTrack(u"fade-pause-preserves-output.fyt"_s, 0, 100000);
@@ -1143,7 +1252,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseDoesNotResetOutputQu
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseFinalisesWhenQueuedFramesDrainEvenIfDelayRemains)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = harness.createTrack(u"fade-pause-delay-residual.fyt"_s, 0, 100000);
@@ -1169,7 +1277,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseFinalisesWhenQueuedF
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PlayCancelsPendingAudiblePauseCompletion)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = harness.createTrack(u"fade-pause-cancelled-by-play.fyt"_s, 0, 100000);
@@ -1200,7 +1307,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PlayCancelsPendingAudiblePaus
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseWatchdogFinalisesPauseWhenDelaySticks)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/true};
 
     const Track track = harness.createTrack(u"fade-pause-watchdog.fyt"_s, 0, 100000);
@@ -1225,7 +1331,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FadePauseWatchdogFinalisesPau
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DisconnectedOutputReinitialisesAndPlaybackCanResume)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"output-disconnect-reinit.fyt"_s, 0, 100000);
@@ -1309,7 +1414,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DisconnectedOutputReinitialis
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekDiscontinuityPublishesNearTargetQuickly)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"seek-quick-discontinuity.fyt"_s, 0, 120000);
@@ -1341,7 +1445,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekDiscontinuityPublishesNea
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, InitialRestoreSeeksBeforeTrackPrefill)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track                           = harness.createTrack(u"initial-restore.fyt"_s, 0, 120000);
@@ -1361,7 +1464,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, InitialRestoreSeeksBeforeTrac
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DecoderPrebufferHoldsPlaybackUntilPcmReady)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"slow-prebuffer.fyt"_s, 0, 120000);
@@ -1383,7 +1485,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DecoderPrebufferHoldsPlayback
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekWithRequestPublishesMatchingRequestIds)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"seek-request-id.fyt"_s, 0, 120000);
@@ -1409,8 +1510,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekWithRequestPublishesMatch
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekInvalidatesArmedPreparedCrossfadeTransition)
 {
-    ensureCoreApplication();
-
     QTemporaryDir tempDir;
     SettingsManager settings{tempDir.filePath(u"settings.ini"_s)};
     registerMinimalEngineSettings(settings, false, false);
@@ -1473,7 +1572,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekInvalidatesArmedPreparedC
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PausedSeekRebuildsCurrentTrackAfterGaplessDecoderAdoption)
 {
-    ensureCoreApplication();
     EngineHarness harness{true};
     AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
     AudioEngineTestAccessor::setPlaybackBufferLengthMs(harness.engine, 1000);
@@ -1532,7 +1630,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PausedSeekRebuildsCurrentTrac
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, OverlapMidpointSwitchPolicyCommitsAfterIncomingAnchor)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     Engine::CrossfadingValues crossfadingValues;
@@ -1595,7 +1692,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, OverlapMidpointSwitchPolicyCo
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SeekWithRequestFromStoppedLoadsTrackAndStartsPlayback)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"seek-from-stopped.fyt"_s, 0, 120000);
@@ -1656,7 +1752,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, AudioStreamRollingBitrateSmooth
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ZeroVbrIntervalDisablesLiveBitrateUpdates)
 {
-    ensureCoreApplication();
     QTemporaryDir tempDir;
     SettingsManager settings{tempDir.filePath(u"settings.ini"_s)};
     registerMinimalEngineSettings(settings, false, false);
@@ -1694,7 +1789,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ZeroVbrIntervalDisablesLiveBi
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PositiveVbrIntervalAllowsLiveBitrateUpdates)
 {
-    ensureCoreApplication();
     QTemporaryDir tempDir;
     SettingsManager settings{tempDir.filePath(u"settings.ini"_s)};
     registerMinimalEngineSettings(settings, false, false);
@@ -1733,7 +1827,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PositiveVbrIntervalAllowsLive
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DisablingVbrUpdatesRestoresStaticTrackBitrate)
 {
-    ensureCoreApplication();
     QTemporaryDir tempDir;
     SettingsManager settings{tempDir.filePath(u"settings.ini"_s)};
     registerMinimalEngineSettings(settings, false, false);
@@ -1775,7 +1868,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, DisablingVbrUpdatesRestoresSt
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PrepareNextTrackInvalidTrackEmitsNotReady)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     bool received{false};
@@ -1802,7 +1894,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, PrepareNextTrackInvalidTrackE
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetVolumeClampsAndPropagatesToOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"volume-clamp.fyt"_s, 0, 100000);
@@ -1825,7 +1916,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetVolumeClampsAndPropagatesT
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetAudioOutputResumesPlaybackAfterReinitialisingOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"switch-output.fyt"_s, 0, 100000);
@@ -1848,7 +1938,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetAudioOutputResumesPlayback
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetOutputDeviceResumesPlaybackAfterReinitialisingOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track track = harness.createTrack(u"switch-device.fyt"_s, 0, 100000);
@@ -1873,7 +1962,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetOutputDeviceResumesPlaybac
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, BufferLengthChangeReconfiguresPlaybackWithoutReinitialisingOutput)
 {
-    ensureCoreApplication();
     QTemporaryDir tempDir;
     SettingsManager settings{tempDir.filePath(u"settings.ini"_s)};
     registerMinimalEngineSettings(settings, false, false);
@@ -1923,7 +2011,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, BufferLengthChangeReconfigure
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetDspChainWithFormatChangeReinitializesOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     harness.registry.registerDsp({.id = u"test.dsp.format_shift"_s, .name = u"FormatShift"_s, .factory = []() {
@@ -1948,7 +2035,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, SetDspChainWithFormatChangeRe
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FormatChangeReloadDoesNotReusePreparedDecoderPosition)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     const Track currentTrack = harness.createTrack(u"prepared-reinit-current.fyt"_s, 0, 120000);
@@ -1996,7 +2082,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FormatChangeReloadDoesNotReus
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FormatMismatchPreparationDiscardsPreparedStream)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
     AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
 
@@ -2020,8 +2105,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FormatMismatchPreparationDisc
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ExclusiveDecodersRejectOverlappingAutoTransitions)
 {
-    ensureCoreApplication();
-
     {
         EngineHarness harness{false};
         AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
@@ -2063,7 +2146,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ExclusiveDecodersRejectOverla
 
 FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, SetAnalysisDataSubscriptionsAcceptsRuntimeChanges)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     harness.engine.setAnalysisDataSubscriptions(Engine::AnalysisDataTypes{Engine::AnalysisDataType::LevelFrameData});
@@ -2075,7 +2157,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, SetAnalysisDataSubscriptionsAcc
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, LevelFramesAreDispatchedAtPresentationTime)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     std::mutex mutex;
@@ -2120,7 +2201,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, LevelFramesAreDispatchedAtPre
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, LevelFrameDispatchDropsStaleDueFrames)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     std::mutex mutex;
@@ -2168,7 +2248,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, LevelFrameDispatchDropsStaleD
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, AudioEngineDispatchesPcmFrames)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     std::mutex mutex;
@@ -2219,8 +2298,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, AudioEngineDispatchesPcmFrame
 
 FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, PublishPositionDoesNotDriveVisualisationClock)
 {
-    ensureCoreApplication();
-
     const QTemporaryDir tempDir;
     const QString settingsPath = tempDir.filePath(u"settings.ini"_s);
     SettingsManager settings{settingsPath};
@@ -2238,7 +2315,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, PublishPositionDoesNotDriveVisu
 
 FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, UpdateLiveDspSettingsHandlesUnknownInstanceGracefully)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     Engine::LiveDspSettingsUpdate update;
@@ -2254,7 +2330,6 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, UpdateLiveDspSettingsHandlesUnk
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ManualChangeCrossfadeReanchorsPositionWithoutStoppingPlayback)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/false, /*enableManualCrossfade=*/true};
 
     const Track firstTrack  = harness.createTrack(u"manual-crossfade-first.fyt"_s, 0, 120000);
@@ -2292,7 +2367,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ManualChangeCrossfadeReanchor
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ManualChangeCrossfadeToRemoteStreamDoesNotReinitOutput)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/false, /*enableManualCrossfade=*/true};
 
     const Track firstTrack  = harness.createTrack(u"manual-crossfade-local-first.fyt"_s, 0, 120000);
@@ -2323,7 +2397,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, ManualChangeCrossfadeToRemote
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, QueueLedUpcomingChangeDoesNotCancelManualRemoteCrossfade)
 {
-    ensureCoreApplication();
     EngineHarness harness{/*enablePauseStopFade=*/false, /*enableManualCrossfade=*/true};
 
     const Track firstTrack    = harness.createTrack(u"queue-led-first.fyt"_s, 0, 120000);
@@ -2357,7 +2430,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, QueueLedUpcomingChangeDoesNot
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, NonCueTracksDoNotForceEndAtMetadataDurationBoundary)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
 
     static constexpr uint64_t trackDurationMs = 200;
@@ -2372,9 +2444,118 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, NonCueTracksDoNotForceEndAtMe
     EXPECT_NE(harness.engine.trackStatus(), Engine::TrackStatus::End);
 }
 
+FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, BoundedSegmentWithoutUpcomingTrackDoesNotPlayFollowingAudio)
+{
+    for(const bool chapter : {false, true}) {
+        SCOPED_TRACE(chapter ? "chapter" : "CUE");
+        EngineHarness harness{false};
+        AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
+        AudioEngineTestAccessor::setPlaybackBufferLengthMs(harness.engine, 1000);
+        harness.decoderStats->sourceEndMs.store(3000, std::memory_order_relaxed);
+        harness.outputStats->setOutputState(236, 20, 20);
+
+        Track track = harness.createTrack(u"bounded-end.fyt"_s, 400, 200);
+        if(chapter) {
+            track.setIsChapter(true);
+        }
+        else {
+            track.setCuePath(u"Embedded"_s);
+        }
+
+        QSignalSpy boundaries{&harness.engine, &AudioEngine::trackBoundaryReached};
+        harness.engine.loadTrack(makePlaybackItem(track, 1), false);
+        const auto stream = AudioEngineTestAccessor::activeStream(harness.engine);
+        ASSERT_TRUE(stream);
+        harness.engine.play();
+        ASSERT_TRUE(pumpUntil([&harness]() { return harness.engine.trackStatus() == Engine::TrackStatus::End; }));
+
+        EXPECT_EQ(stream->positionMs(), track.duration());
+        EXPECT_GT(stream->bufferedDurationMs(), 0);
+        ASSERT_EQ(boundaries.size(), 1);
+        EXPECT_EQ(boundaries.front().at(2).toULongLong(), 0);
+    }
+}
+
+FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, NonContiguousSameFileTransitionDoesNotPlayFollowingAudio)
+{
+    for(const bool chapter : {false, true}) {
+        SCOPED_TRACE(chapter ? "chapter" : "CUE");
+        EngineHarness harness{false};
+        AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
+        AudioEngineTestAccessor::setPlaybackBufferLengthMs(harness.engine, 1000);
+        harness.decoderStats->sourceEndMs.store(3000, std::memory_order_relaxed);
+        harness.outputStats->setOutputState(236, 20, 20);
+
+        Track current = harness.createTrack(u"shuffled-segments.fyt"_s, 1000, 200);
+        if(chapter) {
+            current.setIsChapter(true);
+        }
+        else {
+            current.setCuePath(u"Embedded"_s);
+        }
+        Track adjacent{current};
+        adjacent.setOffset(current.offset() + current.duration());
+        Track target{current};
+        target.setOffset(400);
+        const auto targetItem = makePlaybackItem(target, 2);
+
+        // Mirror the controller's fallback when the engine doesn't own the handoff
+        QObject::connect(&harness.engine, &AudioEngine::trackBoundaryReached, &harness.engine,
+                         [&harness, &current, &targetItem](const Track& track, uint64_t, uint64_t, bool engineOwns) {
+                             if(!engineOwns && track.offset() == current.offset()) {
+                                 harness.engine.loadTrack(targetItem, false);
+                                 harness.engine.setUpcomingTrackCandidate({});
+                             }
+                         });
+        QSignalSpy boundaries{&harness.engine, &AudioEngine::trackBoundaryReached};
+        harness.engine.loadTrack(makePlaybackItem(current, 1), false);
+        const auto outgoingStream = AudioEngineTestAccessor::activeStream(harness.engine);
+        ASSERT_TRUE(outgoingStream);
+        harness.engine.setUpcomingTrackCandidate(makePlaybackItem(adjacent, 3));
+        EXPECT_FALSE(outgoingStream->readLimitSamples().has_value());
+        harness.engine.setUpcomingTrackCandidate(targetItem);
+        harness.engine.play();
+
+        ASSERT_TRUE(
+            pumpUntil([&harness]() { return AudioEngineTestAccessor::currentTrackItemId(harness.engine) == 2; }));
+        EXPECT_EQ(outgoingStream->positionMs(), current.duration());
+        EXPECT_GT(outgoingStream->bufferedDurationMs(), 0);
+        const auto targetStream = AudioEngineTestAccessor::activeStream(harness.engine);
+        ASSERT_TRUE(targetStream);
+        EXPECT_NE(targetStream, outgoingStream);
+        EXPECT_LE(targetStream->positionMs(), target.duration());
+        ASSERT_FALSE(boundaries.empty());
+        EXPECT_EQ(boundaries.front().at(2).toULongLong(), 0);
+    }
+}
+
+FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, ContiguousSegmentSwitchPreservesSourceTimeline)
+{
+    EngineHarness harness{false};
+    harness.outputStats->setOutputState(0, 0, 0);
+    Track current = harness.createTrack(u"contiguous-timeline.fyt"_s, 400, 200);
+    current.setIsChapter(true);
+    Track adjacent = current;
+    adjacent.setOffset(current.offset() + current.duration());
+    const auto adjacentItem = makePlaybackItem(adjacent, 2);
+
+    harness.engine.loadTrack(makePlaybackItem(current, 1), false);
+    harness.engine.setUpcomingTrackCandidate(adjacentItem);
+    harness.engine.play();
+    const auto stream = AudioEngineTestAccessor::activeStream(harness.engine);
+    ASSERT_TRUE(stream);
+
+    // Output may have consumed some of the next chapter before its audible boundary is published
+    std::vector<double> samples(1000);
+    ASSERT_EQ(stream->read(samples.data(), 220), 220);
+    harness.engine.loadTrack(adjacentItem, false);
+    ASSERT_EQ(AudioEngineTestAccessor::activeStream(harness.engine), stream);
+    EXPECT_EQ(stream->read(samples.data(), 500), 180);
+    EXPECT_EQ(stream->positionMs(), current.duration() + adjacent.duration());
+}
+
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, CuePlaylistRepeatRestartsSameFileAtFirstSegment)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
     Engine::CrossfadingValues crossfadingValues;
     crossfadingValues.autoChange.in  = 50;
@@ -2412,7 +2593,6 @@ FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, CuePlaylistRepeatRestartsSame
 
 FOOYIN_AUDIOENGINE_SENSITIVE_TEST(AudioEngineTest, FiniteRepeatOccurrenceUsesPreparedGaplessHandoff)
 {
-    ensureCoreApplication();
     EngineHarness harness{false};
     AudioEngineTestAccessor::setGaplessEnabled(harness.engine, true);
     AudioEngineTestAccessor::setPlaybackBufferLengthMs(harness.engine, 1000);
@@ -2470,3 +2650,10 @@ FOOYIN_AUDIOENGINE_REGULAR_TEST(AudioEngineTest, TimelineTransitionHintsFollowRe
                                                                   AudioDecoder::RepeatHandling::EngineTransition));
 }
 } // namespace Fooyin::Testing
+
+int main(int argc, char* argv[])
+{
+    const QCoreApplication application{argc, argv};
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

@@ -52,6 +52,24 @@
 using namespace Qt::StringLiterals;
 
 namespace Fooyin::Gui {
+QPixmap scaleArtworkPixmap(const QPixmap& pixmap, const QSize& size, double dpr, ArtworkScaling scaling,
+                           Qt::Alignment alignment)
+{
+    if(pixmap.isNull() || size.isEmpty()) {
+        return {};
+    }
+
+    const QSize targetSize{std::max(1, static_cast<int>(std::llround(size.width() * dpr))),
+                           std::max(1, static_cast<int>(std::llround(size.height() * dpr)))};
+    QPixmap scaled = pixmap.scaled(targetSize, artworkAspectRatioMode(scaling), Qt::SmoothTransformation);
+    if(scaling == ArtworkScaling::Fill) {
+        const QRect crop = QStyle::alignedRect(Qt::LeftToRight, alignment, targetSize, scaled.rect());
+        scaled           = scaled.copy(crop);
+    }
+    scaled.setDevicePixelRatio(dpr);
+    return scaled;
+}
+
 namespace {
 void drawRoundedStyleElement(QPainter* painter, const QStyleOption& option, int radiusPercent, Qt::Edges squareEdges,
                              auto&& draw)
@@ -408,13 +426,9 @@ bool styleSupportsDarkMode(const QString& styleName)
 #endif
 }
 
-bool styleUsesNormalItemViewSelectionText(const QString& styleName, bool alternatingRows)
+bool styleUsesNormalItemViewSelectionText(const QString& styleName, bool /*alternatingRows*/)
 {
-    if(styleName.compare("windows11"_L1, Qt::CaseInsensitive) == 0) {
-        // Windows 11 uses an accent selection with contrasting text for alternating rows
-        return !alternatingRows;
-    }
-    return styleName.compare("windowsvista"_L1, Qt::CaseInsensitive) == 0;
+    return styleName.compare("windows11"_L1, Qt::CaseInsensitive) == 0;
 }
 
 QPalette::ColorRole itemViewSelectionTextRole(const QStyleOptionViewItem& option)

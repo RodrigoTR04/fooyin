@@ -21,6 +21,7 @@
 
 #include "artwork/artworkexporter.h"
 #include "artwork/artworkviewerdialog.h"
+#include "artwork/discartwork.h"
 #include "coverwidgetconfigwidget.h"
 #include "internalguisettings.h"
 #include "pixmapfadecontroller.h"
@@ -33,6 +34,7 @@
 #include <gui/coverrepository.h>
 #include <gui/guiconstants.h>
 #include <gui/guisettings.h>
+#include <gui/guiutils.h>
 #include <gui/statusevent.h>
 #include <gui/trackselectioncontroller.h>
 #include <utils/actions/actionmanager.h>
@@ -60,6 +62,11 @@ using namespace Qt::StringLiterals;
 constexpr auto CoverWidgetCoverTypeKey        = u"ArtworkPanel/CoverType";
 constexpr auto CoverWidgetCoverAlignmentKey   = u"ArtworkPanel/CoverAlignment";
 constexpr auto CoverWidgetKeepAspectRatioKey  = u"ArtworkPanel/KeepAspectRatio";
+constexpr auto CoverWidgetArtworkScalingKey   = u"ArtworkPanel/ArtworkScaling";
+constexpr auto CoverWidgetStyleKey            = u"ArtworkPanel/Style";
+constexpr auto CoverWidgetSpinDiscKey         = u"ArtworkPanel/SpinDisc";
+constexpr auto CoverWidgetSpinSpeedKey        = u"ArtworkPanel/SpinSpeedRpm";
+constexpr auto CoverWidgetSpinRampDurationKey = u"ArtworkPanel/SpinRampDurationMs";
 constexpr auto CoverWidgetTrackPreferenceKey  = u"ArtworkPanel/TrackPreference";
 constexpr auto CoverWidgetShowStoppedTrackKey = u"ArtworkPanel/ShowStoppedTrack";
 constexpr auto CoverWidgetFadeEnabledKey      = u"ArtworkPanel/FadeCoverChanges";
@@ -68,9 +75,11 @@ constexpr auto CoverWidgetDoubleClickKey      = u"ArtworkPanel/DoubleClickAction
 constexpr auto CoverWidgetMiddleClickKey      = u"ArtworkPanel/MiddleClickAction";
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-constexpr auto ResizeInterval = 5ms;
+constexpr auto ResizeInterval   = 5ms;
+constexpr auto RotationInterval = 16ms;
 #else
-constexpr auto ResizeInterval = 5;
+constexpr auto ResizeInterval   = 5;
+constexpr auto RotationInterval = 16;
 #endif
 
 namespace Fooyin {
@@ -87,7 +96,10 @@ CoverWidget::CoverWidget(ActionManager* actionManager, PlayerController* playerC
     , m_settings{settings}
     , m_coverProvider{new CoverProvider(coverRepository, this)}
     , m_coverType{Track::Cover::Front}
-    , m_keepAspectRatio{false}
+    , m_artworkScaling{ArtworkScaling::Fit}
+    , m_discAngle{0.0}
+    , m_spinStartSpeedRpm{0.0}
+    , m_spinTargetSpeedRpm{0.0}
     , m_fadeCoverChanges{false}
     , m_fadeController{new PixmapFadeController(this)}
     , m_coverRequestId{0}
@@ -111,7 +123,7 @@ CoverWidget::CoverWidget(ActionManager* actionManager, PlayerController* playerC
     QObject::connect(m_coverProvider, &CoverProvider::coverAdded, this, &CoverWidget::reloadCover,
                      Qt::QueuedConnection);
     QObject::connect(m_coverProvider, &CoverProvider::placeholderChanged, this, [this]() {
-        m_noCover = m_coverProvider->placeholderCover(m_coverType);
+        updatePlaceholderCover();
         reloadCover();
     });
 
@@ -135,7 +147,17 @@ CoverWidget::ConfigData CoverWidget::defaultConfig() const
         m_settings->fileValue(CoverWidgetCoverTypeKey, static_cast<int>(config.coverType)).toInt());
     config.coverAlignment = static_cast<Qt::Alignment>(
         m_settings->fileValue(CoverWidgetCoverAlignmentKey, static_cast<int>(config.coverAlignment)).toInt());
-    config.keepAspectRatio = m_settings->fileValue(CoverWidgetKeepAspectRatioKey, config.keepAspectRatio).toBool();
+    config.style
+        = coverStyleFromInt(m_settings->fileValue(CoverWidgetStyleKey, static_cast<int>(config.style)).toInt());
+
+    if(m_settings->fileContains(CoverWidgetArtworkScalingKey)) {
+        config.artworkScaling = artworkScalingFromInt(m_settings->fileValue(CoverWidgetArtworkScalingKey).toInt());
+    }
+    else {
+        config.artworkScaling = m_settings->fileValue(CoverWidgetKeepAspectRatioKey, true).toBool()
+                                  ? ArtworkScaling::Fit
+                                  : ArtworkScaling::Stretch;
+    }
 
     if(m_settings->fileContains(CoverWidgetTrackPreferenceKey)) {
         config.trackPreference = static_cast<TrackDisplayPreference>(
@@ -149,7 +171,13 @@ CoverWidget::ConfigData CoverWidget::defaultConfig() const
                                                        : TrackDisplayPreference::PlayingTrackBlankWhenStopped;
     }
 
-    config.fadeCoverChanges  = m_settings->fileValue(CoverWidgetFadeEnabledKey, config.fadeCoverChanges).toBool();
+    config.fadeCoverChanges = m_settings->fileValue(CoverWidgetFadeEnabledKey, config.fadeCoverChanges).toBool();
+    config.spinDisc         = m_settings->fileValue(CoverWidgetSpinDiscKey, config.spinDisc).toBool();
+    config.spinSpeedRpm
+        = std::clamp(m_settings->fileValue(CoverWidgetSpinSpeedKey, config.spinSpeedRpm).toInt(), 0, MaxSpinSpeedRpm);
+    config.spinRampDurationMs
+        = std::clamp(m_settings->fileValue(CoverWidgetSpinRampDurationKey, config.spinRampDurationMs).toInt(), 0,
+                     MaxSpinRampDurationMs);
     config.fadeDurationMs    = m_settings->fileValue(CoverWidgetFadeDurationKey, config.fadeDurationMs).toInt();
     config.doubleClickAction = static_cast<CoverAction>(
         m_settings->fileValue(CoverWidgetDoubleClickKey, static_cast<int>(config.doubleClickAction)).toInt());
@@ -169,48 +197,73 @@ const CoverWidget::ConfigData& CoverWidget::currentConfig() const
 void CoverWidget::applyConfig(const ConfigData& config)
 {
     const bool coverTypeChanged       = m_coverType != config.coverType;
-    const bool keepAspectChanged      = m_keepAspectRatio != config.keepAspectRatio;
+    const auto artworkScaling         = artworkScalingFromInt(static_cast<int>(config.artworkScaling));
+    const bool scalingChanged         = m_artworkScaling != artworkScaling;
+    const auto style                  = coverStyleFromInt(static_cast<int>(config.style));
+    const bool styleChanged           = m_config.style != style;
     const bool alignmentChanged       = m_coverAlignment != config.coverAlignment;
     const bool fadeEnabledChanged     = m_fadeCoverChanges != config.fadeCoverChanges;
     const bool trackPreferenceChanged = m_config.trackPreference != config.trackPreference;
     const int fadeDurationMs
         = std::clamp(config.fadeDurationMs, PixmapFadeController::MinDurationMs, PixmapFadeController::MaxDurationMs);
+    const int spinSpeedRpm       = std::clamp(config.spinSpeedRpm, 0, MaxSpinSpeedRpm);
+    const int spinRampDurationMs = std::clamp(config.spinRampDurationMs, 0, MaxSpinRampDurationMs);
+
+    if(m_config.spinSpeedRpm != spinSpeedRpm || m_config.spinRampDurationMs != spinRampDurationMs) {
+        m_discAngle         = discAngle();
+        m_spinStartSpeedRpm = discSpeedRpm();
+        if(m_rotationTimer.isActive()) {
+            m_rotationElapsed.start();
+        }
+    }
 
     m_config = {
-        .coverType         = config.coverType,
-        .coverAlignment    = config.coverAlignment,
-        .keepAspectRatio   = config.keepAspectRatio,
-        .trackPreference   = config.trackPreference,
-        .fadeCoverChanges  = config.fadeCoverChanges,
-        .fadeDurationMs    = fadeDurationMs,
-        .doubleClickAction = config.doubleClickAction,
-        .middleClickAction = config.middleClickAction,
+        .coverType          = config.coverType,
+        .coverAlignment     = config.coverAlignment,
+        .artworkScaling     = artworkScaling,
+        .style              = style,
+        .spinDisc           = config.spinDisc,
+        .spinSpeedRpm       = spinSpeedRpm,
+        .spinRampDurationMs = spinRampDurationMs,
+        .trackPreference    = config.trackPreference,
+        .fadeCoverChanges   = config.fadeCoverChanges,
+        .fadeDurationMs     = fadeDurationMs,
+        .doubleClickAction  = config.doubleClickAction,
+        .middleClickAction  = config.middleClickAction,
     };
 
     m_coverType        = m_config.coverType;
     m_coverAlignment   = m_config.coverAlignment;
-    m_keepAspectRatio  = m_config.keepAspectRatio;
+    m_artworkScaling   = m_config.artworkScaling;
     m_fadeCoverChanges = m_config.fadeCoverChanges;
 
     m_fadeController->setDurationMs(m_config.fadeDurationMs);
     m_fadeController->setEnabled(m_config.fadeCoverChanges);
 
-    Q_EMIT configChanged();
+    if(styleChanged || coverTypeChanged) {
+        updatePlaceholderCover();
+        if(styleChanged) {
+            m_fadeController->setPixmap(effectiveCover(m_cover));
+            stopCoverFade();
+        }
+    }
 
+    updateDiscRotation();
+    Q_EMIT configChanged();
     if(!m_fadeCoverChanges) {
         stopCoverFade();
     }
 
     if(coverTypeChanged || trackPreferenceChanged) {
         ++m_actionRequestId;
-        if(coverTypeChanged) {
-            m_noCover = m_coverProvider->placeholderCover(m_coverType);
-        }
         reloadCover();
+        if(styleChanged) {
+            rescaleCover();
+        }
         return;
     }
 
-    if(keepAspectChanged) {
+    if(styleChanged || scalingChanged || (alignmentChanged && m_artworkScaling == ArtworkScaling::Fill)) {
         rescaleCover();
         return;
     }
@@ -224,7 +277,13 @@ void CoverWidget::saveDefaults(const ConfigData& config) const
 {
     m_settings->fileSet(CoverWidgetCoverTypeKey, static_cast<int>(config.coverType));
     m_settings->fileSet(CoverWidgetCoverAlignmentKey, static_cast<int>(config.coverAlignment));
-    m_settings->fileSet(CoverWidgetKeepAspectRatioKey, config.keepAspectRatio);
+    m_settings->fileSet(CoverWidgetArtworkScalingKey, static_cast<int>(config.artworkScaling));
+    m_settings->fileSet(CoverWidgetStyleKey, static_cast<int>(config.style));
+    m_settings->fileSet(CoverWidgetSpinDiscKey, config.spinDisc);
+    m_settings->fileSet(CoverWidgetSpinSpeedKey, std::clamp(config.spinSpeedRpm, 0, MaxSpinSpeedRpm));
+    m_settings->fileSet(CoverWidgetSpinRampDurationKey,
+                        std::clamp(config.spinRampDurationMs, 0, MaxSpinRampDurationMs));
+    m_settings->fileRemove(CoverWidgetKeepAspectRatioKey);
     m_settings->fileSet(CoverWidgetTrackPreferenceKey, static_cast<int>(config.trackPreference));
     m_settings->fileRemove(CoverWidgetShowStoppedTrackKey);
     m_settings->fileSet(CoverWidgetFadeEnabledKey, config.fadeCoverChanges);
@@ -240,6 +299,11 @@ void CoverWidget::clearSavedDefaults() const
     m_settings->fileRemove(CoverWidgetCoverTypeKey);
     m_settings->fileRemove(CoverWidgetCoverAlignmentKey);
     m_settings->fileRemove(CoverWidgetKeepAspectRatioKey);
+    m_settings->fileRemove(CoverWidgetArtworkScalingKey);
+    m_settings->fileRemove(CoverWidgetStyleKey);
+    m_settings->fileRemove(CoverWidgetSpinDiscKey);
+    m_settings->fileRemove(CoverWidgetSpinSpeedKey);
+    m_settings->fileRemove(CoverWidgetSpinRampDurationKey);
     m_settings->fileRemove(CoverWidgetTrackPreferenceKey);
     m_settings->fileRemove(CoverWidgetShowStoppedTrackKey);
     m_settings->fileRemove(CoverWidgetFadeEnabledKey);
@@ -254,9 +318,16 @@ CoverWidget::ConfigData CoverWidget::configFromLayout(const QJsonObject& layout)
 
     config.coverType
         = static_cast<Track::Cover>(layout.value("CoverType"_L1).toInt(static_cast<int>(config.coverType)));
-    config.coverAlignment
-        = static_cast<Qt::Alignment>(layout.value("CoverAlignment"_L1).toInt(static_cast<int>(config.coverAlignment)));
-    config.keepAspectRatio = layout.value("KeepAspectRatio"_L1).toBool(config.keepAspectRatio);
+    config.coverAlignment = static_cast<Qt::Alignment>(layout.value("CoverAlignment"_L1).toInt(config.coverAlignment));
+    config.style          = coverStyleFromInt(layout.value("Style"_L1).toInt(static_cast<int>(config.style)));
+
+    if(layout.contains("ArtworkScaling"_L1)) {
+        config.artworkScaling = artworkScalingFromInt(layout.value("ArtworkScaling"_L1).toInt());
+    }
+    else if(layout.contains("KeepAspectRatio"_L1)) {
+        config.artworkScaling
+            = layout.value("KeepAspectRatio"_L1).toBool(true) ? ArtworkScaling::Fit : ArtworkScaling::Stretch;
+    }
 
     if(layout.contains("TrackPreference"_L1)) {
         config.trackPreference = static_cast<TrackDisplayPreference>(layout.value("TrackPreference"_L1).toInt());
@@ -266,7 +337,11 @@ CoverWidget::ConfigData CoverWidget::configFromLayout(const QJsonObject& layout)
         config.trackPreference = TrackDisplayPreference::PlayingTrackBlankWhenStopped;
     }
 
-    config.fadeCoverChanges  = layout.value("FadeCoverChanges"_L1).toBool(config.fadeCoverChanges);
+    config.fadeCoverChanges = layout.value("FadeCoverChanges"_L1).toBool(config.fadeCoverChanges);
+    config.spinDisc         = layout.value("SpinDisc"_L1).toBool(config.spinDisc);
+    config.spinSpeedRpm = std::clamp(layout.value("SpinSpeedRpm"_L1).toInt(config.spinSpeedRpm), 0, MaxSpinSpeedRpm);
+    config.spinRampDurationMs
+        = std::clamp(layout.value("SpinRampDurationMs"_L1).toInt(config.spinRampDurationMs), 0, MaxSpinRampDurationMs);
     config.fadeDurationMs    = layout.value("FadeDurationMs"_L1).toInt(config.fadeDurationMs);
     config.doubleClickAction = static_cast<CoverAction>(
         layout.value("DoubleClickAction"_L1).toInt(static_cast<int>(config.doubleClickAction)));
@@ -281,9 +356,14 @@ CoverWidget::ConfigData CoverWidget::configFromLayout(const QJsonObject& layout)
 
 void CoverWidget::saveConfigToLayout(const ConfigData& config, QJsonObject& layout)
 {
-    layout["CoverType"_L1]       = static_cast<int>(config.coverType);
-    layout["CoverAlignment"_L1]  = static_cast<int>(config.coverAlignment);
-    layout["KeepAspectRatio"_L1] = config.keepAspectRatio;
+    layout["CoverType"_L1]          = static_cast<int>(config.coverType);
+    layout["CoverAlignment"_L1]     = static_cast<int>(config.coverAlignment);
+    layout["ArtworkScaling"_L1]     = static_cast<int>(config.artworkScaling);
+    layout["Style"_L1]              = static_cast<int>(config.style);
+    layout["SpinDisc"_L1]           = config.spinDisc;
+    layout["SpinSpeedRpm"_L1]       = std::clamp(config.spinSpeedRpm, 0, MaxSpinSpeedRpm);
+    layout["SpinRampDurationMs"_L1] = std::clamp(config.spinRampDurationMs, 0, MaxSpinRampDurationMs);
+    layout.remove("KeepAspectRatio"_L1);
     layout["TrackPreference"_L1] = static_cast<int>(config.trackPreference);
     layout.remove("ShowStoppedTrack"_L1);
     layout["FadeCoverChanges"_L1]  = config.fadeCoverChanges;
@@ -310,6 +390,7 @@ void CoverWidget::reloadCover()
 {
     const int requestId = ++m_coverRequestId;
     m_track             = displayTrack();
+    updateDiscRotation();
 
     if(!m_track.isValid()) {
         setCoverPixmap({});
@@ -349,6 +430,15 @@ void CoverWidget::loadLayoutData(const QJsonObject& layout)
     applyConfig(configFromLayout(layout));
 }
 
+void CoverWidget::changeEvent(QEvent* event)
+{
+    FyWidget::changeEvent(event);
+    if(event->type() == QEvent::PaletteChange && m_config.style != CoverStyle::Cover) {
+        updatePlaceholderCover();
+        setCoverPixmap(m_cover);
+    }
+}
+
 void CoverWidget::resizeEvent(QResizeEvent* event)
 {
     m_resizeTimer.start(ResizeInterval, this);
@@ -361,22 +451,46 @@ void CoverWidget::contextMenuEvent(QContextMenuEvent* event)
     auto* menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
 
-    auto* keepAspectRatio = new QAction(tr("Keep aspect ratio"), menu);
+    auto* scalingMenu = new QMenu(tr("Artwork scaling"), menu);
+    scalingMenu->setEnabled(m_config.style == CoverStyle::Cover);
+    auto* scalingGroup = new QActionGroup(scalingMenu);
 
-    keepAspectRatio->setCheckable(true);
-    keepAspectRatio->setChecked(m_config.keepAspectRatio);
+    const auto addScalingAction = [this, scalingMenu, scalingGroup](const QString& text, ArtworkScaling scaling) {
+        auto* action = scalingMenu->addAction(text);
+        scalingGroup->addAction(action);
+        action->setCheckable(true);
+        action->setChecked(m_config.artworkScaling == scaling);
+        QObject::connect(action, &QAction::triggered, this, [this, scaling]() {
+            auto config{m_config};
+            config.artworkScaling = scaling;
+            applyConfig(config);
+        });
+    };
+    addScalingAction(tr("Fit"), ArtworkScaling::Fit);
+    addScalingAction(tr("Fill (crop)"), ArtworkScaling::Fill);
+    addScalingAction(tr("Stretch"), ArtworkScaling::Stretch);
 
-    QObject::connect(keepAspectRatio, &QAction::triggered, this, [this](bool checked) {
-        auto config{m_config};
-        config.keepAspectRatio = checked;
-        applyConfig(config);
-    });
+    auto* styleMenu  = new QMenu(tr("Style"), menu);
+    auto* styleGroup = new QActionGroup(styleMenu);
+    for(const auto& [text, style] : {std::pair{tr("Cover"), CoverStyle::Cover}, std::pair{tr("Disc"), CoverStyle::Disc},
+                                     std::pair{tr("Vinyl"), CoverStyle::Vinyl}}) {
+        auto* action = styleMenu->addAction(text);
+        styleGroup->addAction(action);
+        action->setCheckable(true);
+        action->setChecked(m_config.style == style);
+        QObject::connect(action, &QAction::triggered, this, [this, style]() {
+            auto config{m_config};
+            config.style = style;
+            applyConfig(config);
+        });
+    }
 
-    auto* alignmentGroup = new QActionGroup(menu);
+    auto* alignmentMenu  = new QMenu(tr("Alignment"), menu);
+    auto* alignmentGroup = new QActionGroup(alignmentMenu);
 
-    auto* alignCenter = new QAction(tr("Align to centre"), alignmentGroup);
-    auto* alignLeft   = new QAction(tr("Align to left"), alignmentGroup);
-    auto* alignRight  = new QAction(tr("Align to right"), alignmentGroup);
+    auto* alignCenter = new QAction(tr("Centre"), alignmentGroup);
+    auto* alignLeft   = new QAction(tr("Left"), alignmentGroup);
+    auto* alignRight  = new QAction(tr("Right"), alignmentGroup);
 
     alignCenter->setCheckable(true);
     alignLeft->setCheckable(true);
@@ -386,7 +500,7 @@ void CoverWidget::contextMenuEvent(QContextMenuEvent* event)
     alignLeft->setChecked(m_config.coverAlignment == Qt::AlignLeft);
     alignRight->setChecked(m_config.coverAlignment == Qt::AlignRight);
 
-    auto changeAlignment = [this](Qt::Alignment alignment) {
+    const auto changeAlignment = [this](Qt::Alignment alignment) {
         auto config{m_config};
         config.coverAlignment = alignment;
         applyConfig(config);
@@ -395,6 +509,10 @@ void CoverWidget::contextMenuEvent(QContextMenuEvent* event)
     QObject::connect(alignCenter, &QAction::triggered, this, [changeAlignment]() { changeAlignment(Qt::AlignCenter); });
     QObject::connect(alignLeft, &QAction::triggered, this, [changeAlignment]() { changeAlignment(Qt::AlignLeft); });
     QObject::connect(alignRight, &QAction::triggered, this, [changeAlignment]() { changeAlignment(Qt::AlignRight); });
+
+    alignmentMenu->addAction(alignCenter);
+    alignmentMenu->addAction(alignLeft);
+    alignmentMenu->addAction(alignRight);
 
     auto* coverGroup = new QActionGroup(menu);
 
@@ -420,15 +538,13 @@ void CoverWidget::contextMenuEvent(QContextMenuEvent* event)
     QObject::connect(backCover, &QAction::triggered, this, [reload]() { reload(Track::Cover::Back); });
     QObject::connect(artistCover, &QAction::triggered, this, [reload]() { reload(Track::Cover::Artist); });
 
-    menu->addAction(keepAspectRatio);
-    menu->addSeparator();
-    menu->addAction(alignCenter);
-    menu->addAction(alignLeft);
-    menu->addAction(alignRight);
-    menu->addSeparator();
     menu->addAction(frontCover);
     menu->addAction(backCover);
     menu->addAction(artistCover);
+    menu->addSeparator();
+    menu->addMenu(styleMenu);
+    menu->addMenu(scalingMenu);
+    menu->addMenu(alignmentMenu);
     menu->addSeparator();
 
     auto* artworkSettings = new QAction(tr("Artwork settings…"), menu);
@@ -551,6 +667,15 @@ void CoverWidget::timerEvent(QTimerEvent* event)
     if(event->timerId() == m_resizeTimer.timerId()) {
         m_resizeTimer.stop();
         rescaleCover();
+        return;
+    }
+    if(event->timerId() == m_rotationTimer.timerId()) {
+        if(m_spinTargetSpeedRpm == 0.0 && discSpeedRpm() == 0.0) {
+            m_discAngle = discAngle();
+            m_rotationTimer.stop();
+        }
+        update();
+        return;
     }
     FyWidget::timerEvent(event);
 }
@@ -558,6 +683,15 @@ void CoverWidget::timerEvent(QTimerEvent* event)
 void CoverWidget::paintEvent(QPaintEvent* /*event*/)
 {
     QStylePainter painter{this};
+
+    if(m_config.style != CoverStyle::Cover) {
+        const auto discRect = QStyle::alignedRect(layoutDirection(), Qt::AlignVCenter | m_coverAlignment,
+                                                  m_scaledCover.deviceIndependentSize().toSize(), contentsRect());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.translate(QRectF{discRect}.center());
+        painter.rotate(discAngle());
+        painter.translate(-QRectF{discRect}.center());
+    }
 
     if(m_fadeController->progress() < 1.0) {
         if(!m_previousScaledCover.isNull()) {
@@ -590,14 +724,76 @@ QPixmap CoverWidget::effectiveCover(const QPixmap& cover) const
 
 QPixmap CoverWidget::scaledCover(const QPixmap& cover) const
 {
-    const auto aspectRatio = m_keepAspectRatio ? Qt::KeepAspectRatio : Qt::IgnoreAspectRatio;
-    const double dpr       = devicePixelRatioF();
-    const QSize scaledSize = size() * dpr;
+    if(m_config.style != CoverStyle::Cover) {
+        return Gui::renderDiscArtwork(effectiveCover(cover), contentsRect().size(), devicePixelRatioF(), m_config.style,
+                                      palette().color(QPalette::Mid));
+    }
 
-    QPixmap scaled = effectiveCover(cover).scaled(scaledSize, aspectRatio, Qt::SmoothTransformation);
-    scaled.setDevicePixelRatio(dpr);
+    return Gui::scaleArtworkPixmap(effectiveCover(cover), contentsRect().size(), devicePixelRatioF(), m_artworkScaling,
+                                   Qt::AlignVCenter | m_coverAlignment);
+}
 
-    return scaled;
+qreal CoverWidget::discAngle() const
+{
+    const qreal elapsed = m_rotationTimer.isActive() ? m_rotationElapsed.elapsed() : 0;
+    qreal rotation      = elapsed * m_spinTargetSpeedRpm;
+    if(m_config.spinRampDurationMs > 0) {
+        const qreal rampElapsed = std::min(elapsed, static_cast<qreal>(m_config.spinRampDurationMs));
+        rotation -= (m_spinTargetSpeedRpm - m_spinStartSpeedRpm) * rampElapsed
+                  * (1.0 - (rampElapsed / (2.0 * m_config.spinRampDurationMs)));
+    }
+    return std::fmod(m_discAngle + (rotation * 360.0 / 60000.0), 360.0);
+}
+
+qreal CoverWidget::discSpeedRpm() const
+{
+    if(!m_rotationTimer.isActive()) {
+        return 0.0;
+    }
+    if(m_config.spinRampDurationMs == 0) {
+        return m_spinTargetSpeedRpm;
+    }
+
+    const qreal progress = std::min(1.0, static_cast<qreal>(m_rotationElapsed.elapsed()) / m_config.spinRampDurationMs);
+    return std::lerp(m_spinStartSpeedRpm, m_spinTargetSpeedRpm, progress);
+}
+
+void CoverWidget::updateDiscRotation()
+{
+    const bool canRotate = m_config.style != CoverStyle::Cover && m_config.spinDisc && !m_cover.isNull()
+                        && m_track.isValid() && sameDisplayTrack(m_track, m_playerController->currentTrack());
+    if(!canRotate) {
+        if(m_rotationTimer.isActive()) {
+            m_discAngle = discAngle();
+            m_rotationTimer.stop();
+            update();
+        }
+        m_spinStartSpeedRpm  = 0.0;
+        m_spinTargetSpeedRpm = 0.0;
+        return;
+    }
+
+    const qreal targetSpeed
+        = m_playerController->playState() == Player::PlayState::Playing ? m_config.spinSpeedRpm : 0.0;
+    if(targetSpeed == m_spinTargetSpeedRpm) {
+        return;
+    }
+
+    m_discAngle          = discAngle();
+    m_spinStartSpeedRpm  = discSpeedRpm();
+    m_spinTargetSpeedRpm = targetSpeed;
+    m_rotationElapsed.start();
+
+    if(targetSpeed > 0.0 || (m_spinStartSpeedRpm > 0.0 && m_config.spinRampDurationMs > 0)) {
+        if(!m_rotationTimer.isActive()) {
+            m_rotationTimer.start(RotationInterval, Qt::PreciseTimer, this);
+        }
+    }
+    else {
+        m_rotationTimer.stop();
+    }
+
+    update();
 }
 
 Track CoverWidget::displayTrack() const
@@ -660,6 +856,7 @@ void CoverWidget::setCoverPixmap(const QPixmap& cover)
 {
     if(coversMatch(m_cover, cover)) {
         m_cover = cover;
+        updateDiscRotation();
         if(m_fadeController->progress() < 1.0
            && PixmapFadeController::pixmapsMatch(m_fadeController->pixmap(), effectiveCover(cover))) {
             return;
@@ -670,8 +867,20 @@ void CoverWidget::setCoverPixmap(const QPixmap& cover)
     }
 
     m_cover = cover;
+    updateDiscRotation();
     m_fadeController->setPixmap(effectiveCover(cover));
     rescaleCover();
+}
+
+void CoverWidget::updatePlaceholderCover()
+{
+    if(m_config.style == CoverStyle::Cover) {
+        m_noCover = m_coverProvider->placeholderCover(m_coverType);
+    }
+    else {
+        m_noCover = QPixmap{1, 1};
+        m_noCover.fill(palette().color(QPalette::Mid));
+    }
 }
 
 void CoverWidget::handleSelectionChanged()

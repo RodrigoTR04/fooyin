@@ -27,6 +27,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QGroupBox;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
@@ -34,6 +35,7 @@ class QRadioButton;
 
 namespace Fooyin {
 class BackgroundConfigWidget;
+class ColourButton;
 
 namespace Filters {
 class FilterColumnRegistry;
@@ -56,7 +58,6 @@ protected:
 
 private:
     void setupConnections();
-    void updatePlaylistControls();
 
     FilterWidget* m_filterWidget;
     ExpansionConfigWidget* m_expansionConfig;
@@ -82,6 +83,7 @@ private:
     QRadioButton* m_artworkRightMode;
     QRadioButton* m_artworkOverlayMode;
     QRadioButton* m_artworkNoLabelsMode;
+    QCheckBox* m_overlayCaptionsOnInteraction;
     QComboBox* m_coverType;
     QComboBox* m_coverSource;
     QCheckBox* m_showSummary;
@@ -93,6 +95,7 @@ private:
     QSpinBox* m_iconWidth;
     QSpinBox* m_iconHeight;
     QCheckBox* m_autoFitArtwork;
+    QComboBox* m_artworkScaling;
     QSpinBox* m_iconHorizontalGap;
     QSpinBox* m_iconVerticalGap;
     QCheckBox* m_overrideGridMargins;
@@ -101,6 +104,15 @@ private:
     QSpinBox* m_gridRightMargin;
     QSpinBox* m_gridBottomMargin;
     QSpinBox* m_artworkCornerRadius;
+    QGroupBox* m_artworkFrames;
+    QCheckBox* m_highlightHoveredCaptions;
+    QCheckBox* m_artworkHoverFrame;
+    QSpinBox* m_artworkHoverFrameWidth;
+    ColourButton* m_artworkHoverFrameColour;
+    QCheckBox* m_highlightSelectedCaptions;
+    QCheckBox* m_artworkSelectionFrame;
+    QSpinBox* m_artworkSelectionFrameWidth;
+    ColourButton* m_artworkSelectionFrameColour;
     QCheckBox* m_overrideArtworkMargins;
     QSpinBox* m_artworkLeftMargin;
     QSpinBox* m_artworkTopMargin;

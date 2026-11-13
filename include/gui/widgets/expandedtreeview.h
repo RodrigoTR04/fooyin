@@ -21,6 +21,8 @@
 
 #include "fygui_export.h"
 
+#include <gui/coverartworktypes.h>
+
 #include <QAbstractItemView>
 
 #include <set>
@@ -32,6 +34,7 @@ class ExpandedTreeViewPrivate;
 
 struct FYGUI_EXPORT CoverFlowSettings
 {
+    CoverStyle style{CoverStyle::Cover};
     bool autoFitArtwork{true};
     int sideArtworkTilt{55};
     int centreSpacing{70};
@@ -53,6 +56,7 @@ struct FYGUI_EXPORT CoverFlowSettings
     bool animateScrolling{true};
     int animationDuration{200};
     int scrollSensitivity{100};
+    int frameWidth{0};
 
     void normalise();
 
@@ -84,6 +88,14 @@ public:
         Overlay
     };
     Q_ENUM(CaptionDisplay)
+
+    enum class ExpansionPosition : uint8_t
+    {
+        Below = 0,
+        Above,
+        Automatic,
+    };
+    Q_ENUM(ExpansionPosition)
 
     class CoverFlowStyleOption : public QStyleOptionViewItem
     {
@@ -154,6 +166,9 @@ public:
     [[nodiscard]] CaptionDisplay captionDisplay() const;
     void setCaptionDisplay(CaptionDisplay display);
 
+    [[nodiscard]] bool overlayCaptionsOnInteraction() const;
+    void setOverlayCaptionsOnInteraction(bool enabled);
+
     [[nodiscard]] int iconItemColumn() const;
     void setIconItemColumn(int column);
 
@@ -180,6 +195,9 @@ public:
     void setIconHorizontalGap(int gap);
     [[nodiscard]] int iconVerticalGap() const;
     void setIconVerticalGap(int gap);
+
+    //! Item bounds including its share of surrounding gaps in icon mode, in viewport coordinates.
+    [[nodiscard]] QRect iconItemPaintRect(const QModelIndex& index) const;
 
     //! Uses the grid top margin for the first icon row and the row gap for later rows.
     [[nodiscard]] int iconScrollTopMargin(const QModelIndex& index) const;
@@ -210,6 +228,7 @@ public:
     [[nodiscard]] QModelIndex expandedIndex() const;
     void prepareExpansionChange();
     void setExpandedIndex(const QModelIndex& index);
+    void setExpansionPosition(ExpansionPosition position);
     void setExpansionWidget(QWidget* widget);
     void setExpansionAnimated(bool enabled);
     void setExpansionAnimationDuration(int duration);

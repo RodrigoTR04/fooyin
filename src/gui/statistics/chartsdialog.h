@@ -44,12 +44,12 @@ class ChipBar;
  * Charts of listening habits over a chosen period, such as the most played tracks, when music is listened to
  * and how the period compares to the one before it.
  */
-class StatisticsDialog : public QDialog
+class ChartsDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit StatisticsDialog(StatisticsService* service, QWidget* parent = nullptr);
+    explicit ChartsDialog(StatisticsService* service, QWidget* parent = nullptr);
 
 Q_SIGNALS:
     void yearInReviewRequested(int year);

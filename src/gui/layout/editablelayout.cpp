@@ -475,9 +475,12 @@ EditableLayoutPrivate::EditableLayoutPrivate(EditableLayout* self, ActionManager
     updateMargins();
     m_box->addWidget(m_root);
 
-    QObject::connect(m_layoutHistory, &QUndoStack::indexChanged, m_root, [root = m_root]() {
-        if(!root->widget()) {
-            root->reset();
+    QObject::connect(m_layoutHistory, &QUndoStack::indexChanged, m_root, [this]() {
+        if(!m_root->widget()) {
+            m_root->reset();
+        }
+        if(!m_changingLayout) {
+            Q_EMIT m_self->widgetsChanged();
         }
     });
 
@@ -569,6 +572,7 @@ void EditableLayoutPrivate::changeEditingState(bool editing)
         if(!m_changingLayout) {
             m_self->saveLayout();
             m_layoutHistory->clear();
+            Q_EMIT m_self->widgetsChanged();
         }
     }
 }
@@ -580,7 +584,8 @@ void EditableLayoutPrivate::changeLayout(const FyLayout& layout)
     const QScopedValueRollback changingLayout{m_changingLayout, true};
 
     const int duration = m_settings->fileValue(LayoutTransitionDuration, DefaultLayoutTransitionDuration).toInt();
-    const bool enabled = m_settings->fileValue(LayoutTransitionEnabled, DefaultLayoutTransitionEnabled).toBool();
+    const bool enabled = layout.name() != m_layoutProvider->currentLayout().name()
+                      && m_settings->fileValue(LayoutTransitionEnabled, DefaultLayoutTransitionEnabled).toBool();
 
     QPixmap snapshot;
     if(enabled && m_self->isVisible() && m_self->updatesEnabled() && !m_self->size().isEmpty()) {
@@ -1114,7 +1119,13 @@ void EditableLayout::initialise()
 
 void EditableLayout::setToolbarManager(ToolbarManager* toolbarManager)
 {
+    if(p->m_toolbarManager) {
+        QObject::disconnect(p->m_toolbarManager, nullptr, this, nullptr);
+    }
     p->m_toolbarManager = toolbarManager;
+    if(toolbarManager) {
+        QObject::connect(toolbarManager, &ToolbarManager::widgetsChanged, this, &EditableLayout::widgetsChanged);
+    }
 }
 
 FyLayout EditableLayout::saveCurrentToLayout(const QString& name, bool saveWindowSize)

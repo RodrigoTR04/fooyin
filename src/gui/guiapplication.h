@@ -135,6 +135,9 @@ public:
 
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+Q_SIGNALS:
+    void startupFinished();
+
 protected:
     void timerEvent(QTimerEvent* event) override;
 

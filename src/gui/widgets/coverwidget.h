@@ -20,10 +20,12 @@
 #pragma once
 
 #include <core/track.h>
+#include <gui/coverartworktypes.h>
 #include <gui/fywidget.h>
 #include <gui/trackdisplay.h>
 
 #include <QBasicTimer>
+#include <QElapsedTimer>
 #include <QPixmap>
 
 namespace Fooyin {
@@ -52,11 +54,18 @@ class CoverWidget : public FyWidget
     Q_OBJECT
 
 public:
+    static constexpr int MaxSpinSpeedRpm       = 60;
+    static constexpr int MaxSpinRampDurationMs = 10000;
+
     struct ConfigData
     {
         Track::Cover coverType{Track::Cover::Front};
         Qt::Alignment coverAlignment{Qt::AlignCenter};
-        bool keepAspectRatio{true};
+        ArtworkScaling artworkScaling{ArtworkScaling::Fit};
+        CoverStyle style{CoverStyle::Cover};
+        bool spinDisc{true};
+        int spinSpeedRpm{6};
+        int spinRampDurationMs{1000};
         TrackDisplayPreference trackPreference{TrackDisplayPreference::PlayingTrack};
         bool fadeCoverChanges{false};
         int fadeDurationMs{1000};
@@ -94,6 +103,7 @@ Q_SIGNALS:
     void requestArtworkRemoval(const Fooyin::TrackList& tracks, Fooyin::Track::Cover type);
 
 protected:
+    void changeEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -106,6 +116,10 @@ private:
     [[nodiscard]] bool coversMatch(const QPixmap& lhs, const QPixmap& rhs) const;
     [[nodiscard]] QPixmap effectiveCover(const QPixmap& cover) const;
     [[nodiscard]] QPixmap scaledCover(const QPixmap& cover) const;
+    [[nodiscard]] qreal discAngle() const;
+    [[nodiscard]] qreal discSpeedRpm() const;
+
+    void updateDiscRotation();
 
     [[nodiscard]] Track displayTrack() const;
     [[nodiscard]] static bool sameDisplayTrack(const Track& lhs, const Track& rhs);
@@ -113,6 +127,7 @@ private:
     void setFadeCoverChanges(bool enabled);
     void stopCoverFade();
     void setCoverPixmap(const QPixmap& cover);
+    void updatePlaceholderCover();
     void handleSelectionChanged();
 
     void performAction(CoverAction action);
@@ -134,9 +149,14 @@ private:
     ConfigData m_config;
     Track::Cover m_coverType;
     Qt::Alignment m_coverAlignment;
-    bool m_keepAspectRatio;
+    ArtworkScaling m_artworkScaling;
 
     QBasicTimer m_resizeTimer;
+    QBasicTimer m_rotationTimer;
+    QElapsedTimer m_rotationElapsed;
+    qreal m_discAngle;
+    qreal m_spinStartSpeedRpm;
+    qreal m_spinTargetSpeedRpm;
 
     bool m_fadeCoverChanges;
     PixmapFadeController* m_fadeController;

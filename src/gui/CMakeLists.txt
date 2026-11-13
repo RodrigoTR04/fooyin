@@ -109,6 +109,8 @@ set(SOURCES
     artwork/artworksaveutils.h
     artwork/artworkviewerdialog.cpp
     artwork/artworkviewerdialog.h
+    artwork/discartwork.cpp
+    artwork/discartwork.h
     artwork/sources/artworksource.cpp
     artwork/sources/artworksource.cpp
     artwork/sources/artworksource.cpp
@@ -183,6 +185,10 @@ set(SOURCES
     dialog/iconpickerdialog.h
     dialog/importlayoutdialog.cpp
     dialog/importlayoutdialog.h
+    dialog/librarybreakdownmodel.cpp
+    dialog/librarybreakdownmodel.h
+    dialog/listeninghistorymodel.cpp
+    dialog/listeninghistorymodel.h
     dialog/playbackpropertiestab.cpp
     dialog/playbackpropertiestab.h
     dialog/propertiesdialog.cpp
@@ -190,6 +196,8 @@ set(SOURCES
     dialog/saveplaylistsdialog.h
     dialog/searchdialog.cpp
     dialog/searchdialog.h
+    dialog/statisticsdialog.cpp
+    dialog/statisticsdialog.h
     dirbrowser/dirbrowser.cpp
     dirbrowser/dirbrowser.h
     dirbrowser/dirbrowserconfigwidget.cpp
@@ -216,6 +224,8 @@ set(SOURCES
     dsp/resamplersettingswidget.h
     dsp/skipsilencesettingswidget.cpp
     dsp/skipsilencesettingswidget.h
+    filters/coverflowconfigwidget.cpp
+    filters/coverflowconfigwidget.h
     filters/expansion/filterexpansionmodel.cpp
     filters/expansion/filterexpansionmodel.h
     filters/expansion/filterexpansionpopulator.cpp
@@ -226,14 +236,12 @@ set(SOURCES
     filters/expansion/filterexpansiontrackview.h
     filters/expansion/filterexpansionwidget.cpp
     filters/expansion/filterexpansionwidget.h
+    filters/expansionconfigwidget.cpp
+    filters/expansionconfigwidget.h
     filters/filtercolumneditordialog.cpp
     filters/filtercolumneditordialog.h
     filters/filtercolumnregistry.cpp
     filters/filtercolumnregistry.h
-    filters/coverflowconfigwidget.cpp
-    filters/coverflowconfigwidget.h
-    filters/expansionconfigwidget.cpp
-    filters/expansionconfigwidget.h
     filters/filterconfigwidget.cpp
     filters/filterconfigwidget.h
     filters/filterconstants.h
@@ -637,8 +645,8 @@ set(SOURCES
     splitters/splitterstate.h
     splitters/splitterwidget.cpp
     splitters/splitterwidget.h
-    statistics/statisticsdialog.cpp
-    statistics/statisticsdialog.h
+    statistics/chartsdialog.cpp
+    statistics/chartsdialog.h
     statistics/statisticsservice.cpp
     statistics/statisticsservice.h
     statistics/statsart.cpp
@@ -678,6 +686,8 @@ set(SOURCES
     widgets/backgroundimagesource.cpp
     widgets/backgroundrenderer.cpp
     widgets/backgroundrenderer.h
+    widgets/browsingconfigwidget.cpp
+    widgets/browsingconfigwidget.h
     widgets/checkboxdelegate.cpp
     widgets/clickablelabel.cpp
     widgets/colourbutton.cpp

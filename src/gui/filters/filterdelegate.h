@@ -21,6 +21,7 @@
 
 #include "fygui_export.h"
 
+#include "filterfwd.h"
 #include "filteritem.h"
 
 #include <gui/widgets/expandedtreeview.h>
@@ -42,10 +43,17 @@ public:
 
     void setArtworkCornerRadius(int radius);
     void setArtworkMargins(const QMargins& margins);
+    void setArtworkScaling(ArtworkScaling scaling);
+    void setArtworkFrames(const ArtworkFrame& hover, const ArtworkFrame& selection);
+    void setCaptionHighlighting(bool hover, bool selection);
     void setCoverFlowCacheSize(int sizeMb);
 
 private:
-    static RichText recolourRichText(RichText richText, const QColor& colour);
+    struct ArtworkFrameGeometry
+    {
+        QRectF rect;
+        qreal radius{0.0};
+    };
 
     [[nodiscard]] QRect artworkRect(const QStyleOptionViewItem& option) const;
     [[nodiscard]] QRect iconTextRect(const QStyleOptionViewItem& option) const;
@@ -59,8 +67,19 @@ private:
 
     void initLayoutOnlyOption(QStyleOptionViewItem* option, const QModelIndex& index) const;
     static void setupFilterOption(QStyleOptionViewItem* option, const QModelIndex& index);
-    void drawOverlayItem(QPainter* painter, QStyleOptionViewItem option, const QPixmap& artwork,
-                         const IconCaptionLineList& lines) const;
+
+    [[nodiscard]] const ArtworkFrame* artworkFrame(const QStyleOptionViewItem& option) const;
+    [[nodiscard]] ArtworkFrameGeometry artworkFrameGeometry(const QStyleOptionViewItem& option, const QRectF& artwork,
+                                                            int cornerRadius) const;
+
+    void drawArtworkFrame(QPainter* painter, const QStyleOptionViewItem& option,
+                          const ArtworkFrameGeometry& geometry) const;
+    static void drawArtworkLayer(QPainter* painter, const ArtworkFrameGeometry& geometry, const QPointF& position,
+                                 const QPixmap& layer);
+    void drawIconArtwork(QPainter* painter, const QStyleOptionViewItem& option, const QRect& rect,
+                         const QPixmap& artwork) const;
+    void drawOverlayItem(QPainter* painter, const QStyleOptionViewItem& option, const QPixmap& artwork,
+                         const IconCaptionLineList& lines, QStyleOptionViewItem captionOption) const;
     void drawRichTextLines(QPainter* painter, const QStyleOptionViewItem& option, QRect rect,
                            const IconCaptionLineList& lines, const QRectF& artwork) const;
     static void drawTextBlocks(QPainter* painter, const QStyleOptionViewItem& option, QRect rect,
@@ -71,11 +90,17 @@ private:
     void paintCoverFlowCaption(QPainter* painter, QStyleOptionViewItem option, const CoverFlowSettings& settings,
                                const QModelIndex& index) const;
 
-    [[nodiscard]] QPixmap coverFlowPixmap(const QStyleOptionViewItem& option, const QModelIndex& index) const;
+    [[nodiscard]] QPixmap coverFlowPixmap(const QStyleOptionViewItem& option, const QModelIndex& index,
+                                          CoverStyle style) const;
     void cacheCoverFlowPixmap(const QString& key, const QPixmap& pixmap) const;
 
     int m_artworkCornerRadius;
+    ArtworkScaling m_artworkScaling;
     QMargins m_artworkMargins;
+    ArtworkFrame m_artworkHoverFrame;
+    ArtworkFrame m_artworkSelectionFrame;
+    bool m_highlightHoveredCaptions;
+    bool m_highlightSelectedCaptions;
     mutable QCache<QString, QPixmap> m_coverFlowPixmaps;
 };
 } // namespace Fooyin::Filters

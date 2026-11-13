@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## [0.15.1](https://github.com/fooyin/fooyin/releases/tag/v0.15.1) (2026-11-10)
+
+### Improvements
+
+- **Interface**
+  - Add configurable hover and selection frame highlighting for artwork
+  - Expand move target areas during layout editing
+  - Remove native focus frames from artwork views
+
+### Fixes
+
+- **Interface**
+  - Limit filter expansion footer width to track content
+  - Fix alternating row colours in right-caption icon view on Windows
+  - Preserve trailing content when eliding right-aligned text
+  - Fix a crash during searchable widget destruction ([#1890](https://github.com/fooyin/fooyin/issues/1890))
+  - Fix selection text colours in some widgets on Windows
+
+
+## [0.15.0](https://github.com/fooyin/fooyin/releases/tag/v0.15.0) (2026-11-08)
 
 ### New Features
 
@@ -37,7 +56,12 @@
   - Update the Gallery layout to use inline Filter track expansion
   - Add support for inline love and rating editors to single-column Playlist and Filter Expansion scripts ([#1859](https://github.com/fooyin/fooyin/issues/1859))
   - Add optional custom symbols for love and rating editors ([#1685](https://github.com/fooyin/fooyin/issues/1685), [#1746](https://github.com/fooyin/fooyin/pull/1746))
+  - Add configurable playing row styles to Library Tree, Directory Browser, and Radio Browser
+  - Add toolbar support and optional spinbox controls to SoundTouch DSP widgets
+  - Add MPRIS enable toggle and volume curve settings ([#1833](https://github.com/fooyin/fooyin/issues/1833))
+  - Add fit, fill, and stretch scaling options to the Cover widget
   - Normalise the Script Display configuration layout ([#1878](https://github.com/fooyin/fooyin/issues/1878))
+  - Improve the Oscilloscope configuration layout
 - **Library & Metadata**
   - Improve repeated track lookup performance
   - Store MP3 ratings in POPM fields instead of duplicate text fields when configured ([#1201](https://github.com/fooyin/fooyin/issues/1201))
@@ -47,6 +71,7 @@
   - Add an automatic artwork fitting option
   - Add separate grouping scripts for columns
   - Add configurable artwork grid and artwork item margins
+  - Add fit, fill, and stretch artwork scaling options
   - Improve default artwork sizing and caption margins
   - Add overlay artwork captions
   - Add rounded hover, selection, and focus highlights when no margins are configured
@@ -75,6 +100,7 @@
   - Fix playlist-led playback from detached Track Viewer windows
   - Fix stale playing indicators after stopping and starting another track
   - Fix CUE sample rate handling and chapter boundary rounding during verification
+  - Fix CUE and chapter playback boundaries, including long tracks ([#1882](https://github.com/fooyin/fooyin/issues/1882))
 - **Discord**
   - Fix cover artwork tooltips for short album names ([#1842](https://github.com/fooyin/fooyin/pull/1842))
   - Refresh stream metadata and handle live streams correctly ([#1869](https://github.com/fooyin/fooyin/issues/1869))
@@ -99,6 +125,8 @@
   - Refresh table actions after settings models reset, preventing crashes from stale actions ([#1827](https://github.com/fooyin/fooyin/issues/1827))
   - Fix cached artwork loading when its storage is unavailable
   - Fix Spectrum FFT window alignment with playback time ([#1795](https://github.com/fooyin/fooyin/issues/1795))
+  - Fix Spectrogram seek bar access during initialisation
+  - Preserve Search connections across layout edits, widget replacement, and saving
 - **Playlists**
   - Fix dragging selected tracks from sorted autoplaylists ([#1821](https://github.com/fooyin/fooyin/issues/1821))
   - Fix drag-and-drop, large grouped selections, and inline editing during modified selections ([#1853](https://github.com/fooyin/fooyin/pull/1853))
@@ -114,7 +142,7 @@
 ### Build/System
 
 - **Packaging:** Fix plugin bundle RPATHs and runtime contents, and avoid duplicate Windows DLLs
-- **Translations:** Update translations and translation sources ([#1818](https://github.com/fooyin/fooyin/pull/1818), [#1819](https://github.com/fooyin/fooyin/pull/1819), [#1873](https://github.com/fooyin/fooyin/pull/1873), [#1874](https://github.com/fooyin/fooyin/pull/1874))
+- **Translations:** Update translations and translation sources ([#1818](https://github.com/fooyin/fooyin/pull/1818), [#1819](https://github.com/fooyin/fooyin/pull/1819), [#1873](https://github.com/fooyin/fooyin/pull/1873), [#1874](https://github.com/fooyin/fooyin/pull/1874), [#1883](https://github.com/fooyin/fooyin/pull/1883), [#1884](https://github.com/fooyin/fooyin/pull/1884))
 - **Windows:** Fix MSVC builds and test discovery during DLL deployment
 - **X11:** Require the XCB components used by Global Shortcuts
 
