@@ -109,6 +109,8 @@ set(SOURCES
     artwork/artworksaveutils.h
     artwork/artworkviewerdialog.cpp
     artwork/artworkviewerdialog.h
+    artwork/discartwork.cpp
+    artwork/discartwork.h
     artwork/sources/artworksource.cpp
     artwork/sources/artworksource.cpp
     artwork/sources/artworksource.cpp
@@ -183,6 +185,10 @@ set(SOURCES
     dialog/iconpickerdialog.h
     dialog/importlayoutdialog.cpp
     dialog/importlayoutdialog.h
+    dialog/librarybreakdownmodel.cpp
+    dialog/librarybreakdownmodel.h
+    dialog/listeninghistorymodel.cpp
+    dialog/listeninghistorymodel.h
     dialog/playbackpropertiestab.cpp
     dialog/playbackpropertiestab.h
     dialog/propertiesdialog.cpp
@@ -190,6 +196,8 @@ set(SOURCES
     dialog/saveplaylistsdialog.h
     dialog/searchdialog.cpp
     dialog/searchdialog.h
+    dialog/statisticsdialog.cpp
+    dialog/statisticsdialog.h
     dirbrowser/dirbrowser.cpp
     dirbrowser/dirbrowser.h
     dirbrowser/dirbrowserconfigwidget.cpp
@@ -663,6 +671,8 @@ set(SOURCES
     widgets/backgroundimagesource.cpp
     widgets/backgroundrenderer.cpp
     widgets/backgroundrenderer.h
+    widgets/browsingconfigwidget.cpp
+    widgets/browsingconfigwidget.h
     widgets/checkboxdelegate.cpp
     widgets/clickablelabel.cpp
     widgets/colourbutton.cpp
