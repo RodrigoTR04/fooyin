@@ -67,7 +67,7 @@
 
 using namespace Qt::StringLiterals;
 
-constexpr auto CurrentSchemaVersion = 23;
+constexpr auto CurrentSchemaVersion = 26;
 
 namespace {
 template <typename Predicate>

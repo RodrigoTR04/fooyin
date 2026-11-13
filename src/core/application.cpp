@@ -51,6 +51,7 @@
 #include <core/network/remoteioservice.h>
 #include <core/player/playbackhistoryservice.h>
 #include <core/player/playercontroller.h>
+#include <core/playhistory/playhistory.h>
 #include <core/playlist/playlisthandler.h>
 #include <core/playlist/playlistloader.h>
 #include <core/plugins/coreplugin.h>
@@ -119,6 +120,7 @@ Application::Application(QObject* parent)
                                         m_remoteIo, m_settings, this)}
     , m_playlistHandler{new PlaylistHandler(m_database->connectionPool(), m_audioLoader, m_library, m_settings, this)}
     , m_playerController{new PlayerController(m_settings, m_playlistHandler, this)}
+    , m_playHistory{new PlayHistory(m_database->connectionPool(), this)}
     , m_scriptContext{new ScriptContextService(m_playerController, m_playlistHandler, this)}
     , m_playbackHistoryService{std::make_unique<PlaybackHistoryService>(m_playerController,
                                                                         m_database->connectionPool())}
@@ -181,6 +183,12 @@ Application::Application(QObject* parent)
                      [this](const TrackList& tracks) { tracksWereUpdated(tracks); });
     QObject::connect(m_playerController, &PlayerController::trackPlayed, m_library,
                      &UnifiedMusicLibrary::trackWasPlayed);
+    QObject::connect(m_playerController, &PlayerController::trackPlayed, m_playHistory, [this](const Track& track) {
+        // Listens are counted after a configurable time, and not necessarily at the same point in the track if it has
+        // been skipped through. The history needs both to tell when tracks were played one after the other
+        m_playHistory->recordPlay(track, static_cast<qint64>(m_playerController->currentTimeListened()),
+                                  static_cast<qint64>(m_playerController->currentPosition()));
+    });
     QObject::connect(m_playerController, &PlayerController::currentTrackChanged, m_library,
                      &UnifiedMusicLibrary::setActivePlaybackTrack);
     QObject::connect(m_playerController, &PlayerController::playStateChanged, m_library,
@@ -295,6 +303,11 @@ PluginManager* Application::pluginManager() const
 PlayerController* Application::playerController() const
 {
     return m_playerController;
+}
+
+PlayHistory* Application::playHistory() const
+{
+    return m_playHistory;
 }
 
 ScriptContextService* Application::scriptContextService() const

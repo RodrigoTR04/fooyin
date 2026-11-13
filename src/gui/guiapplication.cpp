@@ -40,6 +40,7 @@
 #include "menubar/librarymenu.h"
 #include "menubar/mainmenubar.h"
 #include "menubar/playbackmenu.h"
+#include "menubar/statisticsmenu.h"
 #include "menubar/viewmenu.h"
 #include "metadatalookup/metadatalookupdialog.h"
 #include "playlist/manager/playlistmanagerwidget.h"
@@ -283,6 +284,7 @@ GuiApplication::GuiApplication(Application* core)
     , m_styleProvider{new GuiStyleProvider(m_settings, this)}
     , m_advancedSettingsRegistry{std::make_unique<AdvancedSettingsRegistry>(m_settings)}
     , m_coverRepository{new CoverRepository(m_core->audioLoader(), m_core->remoteIoService(), m_settings, this)}
+    , m_statisticsMenu{new StatisticsMenu(m_core, m_actionManager, m_coverRepository, this)}
     , m_guiPluginContext{m_actionManager,
                          m_layoutProvider.get(),
                          m_selectionController.get(),

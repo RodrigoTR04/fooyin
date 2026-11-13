@@ -19,6 +19,8 @@
 
 #include "trackdatabase.h"
 
+#include "playhistorydatabase.h"
+
 #include "databasehelpers.h"
 
 #include <core/constants.h>
@@ -439,6 +441,8 @@ bool TrackDatabase::updateTrack(const Track& track)
                                      "CreatedDate = :createdDate"
                                      " WHERE TrackID = :trackId;"_s;
 
+    const QString previousHash = storedHash(track.id());
+
     DbQuery query{db(), statement};
 
     query.bindValue(u":trackId"_s, track.id());
@@ -448,7 +452,40 @@ bool TrackDatabase::updateTrack(const Track& track)
         query.bindValue(name, value);
     }
 
-    return query.exec();
+    if(!query.exec()) {
+        return false;
+    }
+
+    syncPlayHistory(previousHash, track);
+    return true;
+}
+
+QString TrackDatabase::storedHash(int id) const
+{
+    static const QString statement = u"SELECT TrackHash FROM Tracks WHERE TrackID = :trackId;"_s;
+
+    DbQuery query{db(), statement};
+    query.bindValue(u":trackId"_s, id);
+
+    if(query.exec() && query.next()) {
+        return query.value(0).toString();
+    }
+    return {};
+}
+
+void TrackDatabase::syncPlayHistory(const QString& previousHash, const Track& track) const
+{
+    if(track.hash().isEmpty()) {
+        return;
+    }
+
+    PlayHistoryDatabase history;
+    history.initialise(dbProvider());
+
+    history.moveTrack(previousHash, track.hash());
+    // The hash doesn't cover everything the history keeps, such as the album artist, so this is needed whether the
+    // hash changed or not
+    history.refreshMetadata(PlayHistoryEntry::fromTrack(track, 0));
 }
 
 bool TrackDatabase::updateTrackStats(const Track& track)

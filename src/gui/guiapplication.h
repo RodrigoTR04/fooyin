@@ -73,6 +73,7 @@ class PropertiesDialog;
 class QueueViewer;
 class SearchController;
 class ScriptCommandHandler;
+class StatisticsMenu;
 class ScriptSubscription;
 class SystemTrayIcon;
 class ThemeRegistry;
@@ -254,6 +255,7 @@ private:
     GuiStyleProvider* m_styleProvider;
     std::unique_ptr<AdvancedSettingsRegistry> m_advancedSettingsRegistry;
     CoverRepository* m_coverRepository;
+    StatisticsMenu* m_statisticsMenu;
 
     GuiPluginContext m_guiPluginContext;
 
