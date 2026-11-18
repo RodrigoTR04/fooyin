@@ -39,6 +39,8 @@ using namespace Qt::StringLiterals;
 namespace {
 constexpr auto FormatName   = "fooyin-listening-history";
 constexpr int FormatVersion = 1;
+//! How much of a file is read to tell what kind of history it holds.
+constexpr qint64 SniffSize = 16 * 1024;
 //! How deep to look for the history inside a backup. Namida's backup is a zip of zips.
 constexpr int MaxArchiveDepth = 2;
 
@@ -232,11 +234,20 @@ PlayHistoryFormat detectFormat(const QString& filepath)
         return PlayHistoryFormat::Unknown;
     }
 
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    if(document.isObject() && document.object().value("format"_L1).toString() == QLatin1String{FormatName}) {
+    // An export of a long history runs to tens of megabytes, which would take a while to parse just to tell what it is.
+    // How it starts is enough: the file is read properly when it's imported. The keys of an export are written in
+    // alphabetical order, so its format comes after only the device and the time it was exported
+    const QString start = QString::fromUtf8(file.read(SniffSize));
+
+    static const QRegularExpression fooyin{uR"(^\s*\{.*"format"\s*:\s*")"_s + QLatin1String{FormatName} + u"\""_s,
+                                           QRegularExpression::DotMatchesEverythingOption};
+    static const QRegularExpression namida{uR"(^\s*\[\s*\{.*"dateAdded"\s*:)"_s,
+                                           QRegularExpression::DotMatchesEverythingOption};
+
+    if(fooyin.match(start).hasMatch()) {
         return PlayHistoryFormat::Fooyin;
     }
-    if(document.isArray() && std::ranges::any_of(document.array(), isNamidaListen)) {
+    if(namida.match(start).hasMatch()) {
         return PlayHistoryFormat::Namida;
     }
 

@@ -95,8 +95,20 @@ Fooyin::PlayHistoryImportResult importNamida(const Fooyin::PlayHistoryDatabase& 
         return result;
     }
 
-    // Only added once it has listens to show for it, so a device given the wrong name doesn't linger
-    int source = database.findNamidaSource(name);
+    // Namida doesn't identify the device, so it's recognised by the listens it has in common with one here, however
+    // either is named, such as a phone that first came by way of another installation. Failing that, it's the device
+    // with the name given, which is only added once it has listens to show for it, so a mistyped name doesn't linger
+    int source{0};
+    for(const auto& listen : history->listens) {
+        if(const int existing = database.sourceOf(origin, listen.timestamp); existing > 0) {
+            source = existing;
+            break;
+        }
+    }
+    if(source == 0) {
+        source = database.findNamidaSource(name);
+    }
+
     QSet<QString> unmatched;
 
     const auto& listens = history->listens;
@@ -160,7 +172,14 @@ Fooyin::PlayHistoryImportResult importNamida(const Fooyin::PlayHistoryDatabase& 
         return result;
     }
 
-    result.devices         = {name};
+    // By the name it has here, which may not be the one given
+    if(source != 0) {
+        for(const auto& known : database.sources()) {
+            if(known.id == source) {
+                result.devices = {known.name};
+            }
+        }
+    }
     result.invalid         = history->invalid;
     result.unmatchedTracks = {unmatched.cbegin(), unmatched.cend()};
     result.unmatchedTracks.sort();
@@ -245,8 +264,6 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
         return std::tie(a.timestamp, a.origin) < std::tie(b.timestamp, b.origin);
     });
 
-    QSet<int> contributed;
-
     for(size_t first{0}; first < entries.size();) {
         size_t end{first};
         while(end < entries.size() && entries.at(end).timestamp == entries.at(first).timestamp
@@ -288,7 +305,6 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
                     seen.insert(id);
                 }
                 entry.source = id;
-                contributed.insert(id);
             }
 
             if(!database.insert(entry)) {
@@ -310,9 +326,10 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
         return result;
     }
 
-    // By the names they have here, which may not be the ones they have in the file
+    // Every device whose history was imported, even if it had nothing new, as with the time it was last imported. By
+    // the names they have here, which may not be the ones they have in the file
     for(const auto& source : database.sources()) {
-        if(contributed.contains(source.id)) {
+        if(seen.contains(source.id)) {
             result.devices.append(source.name);
         }
     }
@@ -438,7 +455,7 @@ QFuture<std::vector<PlayHistorySource>> PlayHistory::sources() const
     });
 }
 
-QFuture<bool> PlayHistory::renameSource(int id, const QString& name)
+QFuture<PlayHistoryRenameResult> PlayHistory::renameSource(int id, const QString& name)
 {
     return QtConcurrent::run(&m_writePool, [pool = m_dbPool, id, name]() {
         const DbConnectionHandler dbHandler{pool};

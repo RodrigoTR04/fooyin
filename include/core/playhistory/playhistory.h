@@ -148,6 +148,14 @@ enum class PlayHistoryFormat : uint8_t
     Namida,
 };
 
+enum class PlayHistoryRenameResult : uint8_t
+{
+    Renamed,
+    //! Another Namida device already has the name. They're told apart by name, so two can't share one.
+    NameTaken,
+    Failed,
+};
+
 struct FYCORE_EXPORT PlayHistoryImportResult
 {
     //! Why nothing was imported, or empty if the import succeeded.
@@ -204,8 +212,8 @@ public:
 
     //! The devices listens have been recorded on, starting with this one.
     [[nodiscard]] QFuture<std::vector<PlayHistorySource>> sources() const;
-    //! Renames the device with @p id, which is this one if @p id is 0. Fails if another Namida device has that name.
-    QFuture<bool> renameSource(int id, const QString& name);
+    //! Renames the device with @p id, which is this one if @p id is 0.
+    QFuture<PlayHistoryRenameResult> renameSource(int id, const QString& name);
     //! Removes the device with @p id, which can't be this one, along with every listen imported from it.
     QFuture<bool> removeSource(int id);
     /*!

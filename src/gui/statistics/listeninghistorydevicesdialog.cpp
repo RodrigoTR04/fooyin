@@ -360,12 +360,19 @@ void ListeningHistoryDevicesDialog::renameSelected()
         return;
     }
 
-    m_history->renameSource(id, name).then(this, [this, name](bool renamed) {
-        if(!renamed) {
-            QMessageBox::warning(this, tr("Rename Device"),
-                                 tr("Another Namida device is already called %1. If they're the same phone, merge one "
-                                    "into the other instead.")
-                                     .arg(name));
+    m_history->renameSource(id, name).then(this, [this, name](PlayHistoryRenameResult result) {
+        switch(result) {
+            case PlayHistoryRenameResult::Renamed:
+                break;
+            case PlayHistoryRenameResult::NameTaken:
+                QMessageBox::warning(this, tr("Rename Device"),
+                                     tr("Another Namida device is already called %1. If they're the same phone, merge "
+                                        "one into the other instead.")
+                                         .arg(name));
+                break;
+            case PlayHistoryRenameResult::Failed:
+                QMessageBox::warning(this, tr("Rename Device"), tr("The device could not be renamed."));
+                break;
         }
         reload();
     });
@@ -383,9 +390,18 @@ void ListeningHistoryDevicesDialog::mergeSelected()
         return;
     }
 
-    QStringList names;
+    // Merging can't be undone, and names aren't always unique, such as two installations on computers with the same
+    // name, so each choice has to say which device it is
+    QStringList labels;
     for(const auto* target : targets) {
-        names.append(target->data(Device, NameRole).toString());
+        QString label
+            = tr("%1 (%2, %n listen(s) since %3)", nullptr, target->data(Device, ListensRole).toInt())
+                  .arg(target->data(Device, NameRole).toString(), target->text(App), target->text(FirstListen));
+        const QString base = label;
+        for(int n{2}; labels.contains(label); ++n) {
+            label = u"%1 #%2"_s.arg(base).arg(n);
+        }
+        labels.append(label);
     }
 
     const QString name = item->data(Device, NameRole).toString();
@@ -396,15 +412,21 @@ void ListeningHistoryDevicesDialog::mergeSelected()
         tr("If %1 is the same device as another, its listens can be merged into that one's. History imported from %1 "
            "later on will go to it too.\n\nMerge into:")
             .arg(name),
-        names, 0, false, &ok);
-    if(!ok) {
+        labels, 0, false, &ok);
+    const auto index = labels.indexOf(chosen);
+    if(!ok || index < 0) {
         return;
     }
 
     const int from = item->data(Device, SourceIdRole).toInt();
-    const int into = targets.at(names.indexOf(chosen))->data(Device, SourceIdRole).toInt();
+    const int into = targets.at(index)->data(Device, SourceIdRole).toInt();
 
-    m_history->mergeSource(from, into).then(this, [this](bool) { reload(); });
+    m_history->mergeSource(from, into).then(this, [this](bool merged) {
+        if(!merged) {
+            QMessageBox::warning(this, tr("Merge Device"), tr("The devices could not be merged."));
+        }
+        reload();
+    });
 }
 
 void ListeningHistoryDevicesDialog::removeSelected()
@@ -420,7 +442,9 @@ void ListeningHistoryDevicesDialog::removeSelected()
 
     const auto answer = QMessageBox::question(
         this, tr("Remove Device"),
-        tr("Remove %1 and the %n listen(s) imported from it? They can be imported again later.", nullptr, listens)
+        tr("Remove %1 and the %n listen(s) imported from it, including from any devices merged into it? They can be "
+           "imported again later.",
+           nullptr, listens)
             .arg(name),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 

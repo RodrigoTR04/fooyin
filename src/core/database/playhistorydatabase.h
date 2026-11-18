@@ -60,13 +60,13 @@ public:
     [[nodiscard]] int findSource(const QString& kind, const QString& deviceId) const;
     //! The id of the device of @p kind identified by @p deviceId, which is added as @p name if it's new. 0 on error.
     [[nodiscard]] int findOrAddSource(const QString& kind, const QString& deviceId, const QString& name) const;
-    //! The id of the Namida device called @p name, or 0 if there isn't one.
+    //! The id of the Namida device called @p name, or of the one it was merged into, or 0 if there isn't one.
     [[nodiscard]] int findNamidaSource(const QString& name) const;
     //! The id of the Namida device called @p name, which is added if it's new. 0 on error.
     [[nodiscard]] int findOrAddNamidaSource(const QString& name) const;
     void setLastImported(int id, qint64 timestamp) const;
     //! Fails if @p name is already that of another Namida device, as they're told apart by name.
-    bool renameSource(int id, const QString& name) const;
+    PlayHistoryRenameResult renameSource(int id, const QString& name) const;
     //! Moves the listens of the device with @p from to the one with @p into, which has to be of the same kind, and
     //! remembers that it's the same device for later imports.
     bool mergeSource(int from, int into) const;

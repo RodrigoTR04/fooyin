@@ -467,13 +467,19 @@ int PlayHistoryDatabase::findOrAddSource(const QString& kind, const QString& dev
 
 int PlayHistoryDatabase::findNamidaSource(const QString& name) const
 {
-    // Namida doesn't identify the device, so it's whichever one the person chose by name
-    DbQuery query{db(), u"SELECT SourceID FROM PlayHistorySources WHERE Kind = :kind AND Name = :name AND "
-                        "MergedInto = 0;"_s};
+    // Namida doesn't identify the device, so it's whichever one the person chose by name. A device that was merged into
+    // another is still recognised by its name, as the one it's now part of, unless a device has been given it since
+    DbQuery query{db(), u"SELECT SourceID, MergedInto FROM PlayHistorySources WHERE Kind = :kind AND Name = :name "
+                        "ORDER BY MergedInto != 0, SourceID LIMIT 1;"_s};
     query.bindValue(u":kind"_s, QLatin1String{PlayHistoryImport::NamidaKind});
     query.bindValue(u":name"_s, name);
 
-    return query.exec() && query.next() ? query.value(0).toInt() : 0;
+    if(!query.exec() || !query.next()) {
+        return 0;
+    }
+
+    const int merged = query.value(1).toInt();
+    return merged != 0 ? merged : query.value(0).toInt();
 }
 
 int PlayHistoryDatabase::findOrAddNamidaSource(const QString& name) const
@@ -494,12 +500,13 @@ void PlayHistoryDatabase::setLastImported(int id, qint64 timestamp) const
     query.exec();
 }
 
-bool PlayHistoryDatabase::renameSource(int id, const QString& name) const
+PlayHistoryRenameResult PlayHistoryDatabase::renameSource(int id, const QString& name) const
 {
     if(id == 0) {
         SettingsDatabase settings;
         settings.initialise(dbProvider());
-        return settings.set(QLatin1String{DeviceNameSetting}, name);
+        return settings.set(QLatin1String{DeviceNameSetting}, name) ? PlayHistoryRenameResult::Renamed
+                                                                    : PlayHistoryRenameResult::Failed;
     }
 
     // Namida devices are told apart by name, so two can't share one
@@ -510,14 +517,18 @@ bool PlayHistoryDatabase::renameSource(int id, const QString& name) const
     taken.bindValue(u":namida"_s, QLatin1String{PlayHistoryImport::NamidaKind});
     taken.bindValue(u":name"_s, name);
     taken.bindValue(u":other"_s, id);
-    if(!taken.exec() || taken.next()) {
-        return false;
+    if(!taken.exec()) {
+        return PlayHistoryRenameResult::Failed;
+    }
+    if(taken.next()) {
+        return PlayHistoryRenameResult::NameTaken;
     }
 
     DbQuery query{db(), u"UPDATE PlayHistorySources SET Name = :name WHERE SourceID = :id;"_s};
     query.bindValue(u":name"_s, name);
     query.bindValue(u":id"_s, id);
-    return query.exec();
+    return query.exec() && query.numRowsAffected() > 0 ? PlayHistoryRenameResult::Renamed
+                                                       : PlayHistoryRenameResult::Failed;
 }
 
 bool PlayHistoryDatabase::mergeSource(int from, int into) const

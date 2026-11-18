@@ -467,8 +467,9 @@ TEST_F(PlayHistoryImportTest, KeepsTrackOfWhatEachDeviceContributed)
     EXPECT_EQ(sources.at(1).lastListen, at(5));
     EXPECT_GT(sources.at(1).lastImported, 0);
 
-    EXPECT_TRUE(history.renameSource(0, u"Desktop"_s).result());
-    EXPECT_TRUE(history.renameSource(sources.at(1).id, u"Pixel"_s).result());
+    EXPECT_EQ(history.renameSource(0, u"Desktop"_s).result(), PlayHistoryRenameResult::Renamed);
+    EXPECT_EQ(history.renameSource(sources.at(1).id, u"Pixel"_s).result(), PlayHistoryRenameResult::Renamed);
+    EXPECT_EQ(history.renameSource(12345, u"Nothing"_s).result(), PlayHistoryRenameResult::Failed);
     sources = history.sources().result();
     EXPECT_EQ(sources.at(0).name, u"Desktop"_s);
     EXPECT_EQ(sources.at(1).name, u"Pixel"_s);
@@ -518,7 +519,8 @@ TEST_F(PlayHistoryImportTest, MergesTheHistoryOfOtherFooyinInstallationsWithoutC
     ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
     EXPECT_EQ(result.added, 1);
     EXPECT_EQ(result.duplicates, 2);
-    EXPECT_EQ(result.devices, QStringList{u"Laptop"_s});
+    // Both devices' histories were imported, even though only one had anything new
+    EXPECT_EQ(result.devices, (QStringList{u"Laptop"_s, u"Phone"_s}));
 
     // Everything about the listen is kept, even if the track isn't in this library
     auto entries = listens(m_pool);
@@ -797,8 +799,8 @@ TEST_F(PlayHistoryImportTest, KeepsDifferentPhonesWithTheSameNameApart)
     EXPECT_EQ(sources.at(1).listens, 2);
     EXPECT_EQ(sources.at(2).name, u"Phone (2)"_s);
     EXPECT_EQ(sources.at(2).listens, 2);
-    EXPECT_FALSE(desktop.renameSource(sources.at(2).id, u"Phone"_s).result());
-    EXPECT_TRUE(desktop.renameSource(sources.at(2).id, u"Their phone"_s).result());
+    EXPECT_EQ(desktop.renameSource(sources.at(2).id, u"Phone"_s).result(), PlayHistoryRenameResult::NameTaken);
+    EXPECT_EQ(desktop.renameSource(sources.at(2).id, u"Their phone"_s).result(), PlayHistoryRenameResult::Renamed);
 }
 
 TEST_F(PlayHistoryImportTest, RejectsExportsThatDescribeTheirDevicesWrongly)
@@ -962,5 +964,110 @@ TEST_F(PlayHistoryImportTest, AFolderEveryAlbumMightHaveIsNotEnoughToMatch)
     EXPECT_EQ(matcher.match(phonePath(u"Artist A/Album A/CD1/01 - Intro.mp3"_s)), nullptr);
     EXPECT_NE(matcher.match(phonePath(u"Artist B/Album B/CD1/01 - Intro.mp3"_s)), nullptr);
     EXPECT_NE(matcher.match(phonePath(u"Album B/CD1/01 - Intro.flac"_s)), nullptr);
+}
+TEST_F(PlayHistoryImportTest, RecognisesAPhoneByItsListensWhenImportedUnderAnotherName)
+{
+    PlayHistory history{m_pool};
+
+    std::vector<std::pair<qint64, QString>> phone{{at(1), u"Kiesza/Hideaway/Hideaway.mp3"_s}};
+    history.importFile(writeFile(u"first.zip"_s, namidaBackup(phone)), u"Phone"_s, m_library).waitForFinished();
+
+    // A newer backup of the same phone, given another name
+    phone.emplace_back(at(2), u"Modjo/Modjo/Chillin'.mp3"_s);
+    const auto result
+        = history.importFile(writeFile(u"second.zip"_s, namidaBackup(phone)), u"Pixel"_s, m_library).result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.devices, QStringList{u"Phone"_s});
+
+    const auto sources = history.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).name, u"Phone"_s);
+    EXPECT_EQ(sources.at(1).listens, 2);
+}
+
+TEST_F(PlayHistoryImportTest, RecognisesAPhoneThatFirstCameByWayOfAnotherInstallation)
+{
+    // The laptop imported the phone's backup and its history came to the desktop from there
+    QTemporaryDir laptopDir;
+    auto laptopPool = createDbPool(laptopDir.filePath(u"fooyin.db"_s));
+    const DbConnectionHandler laptopHandler{laptopPool};
+    PlayHistory laptop{laptopPool};
+
+    std::vector<std::pair<qint64, QString>> phone{{at(1), u"Kiesza/Hideaway/Hideaway.mp3"_s}};
+    laptop.importFile(writeFile(u"first.zip"_s, namidaBackup(phone)), u"Phone"_s, m_library).waitForFinished();
+
+    const QString laptopExport = m_dir.filePath(u"laptop.json"_s);
+    ASSERT_EQ(laptop.exportFile(laptopExport).result(), QString{});
+
+    PlayHistory desktop{m_pool};
+    desktop.importFile(laptopExport, {}, m_library).waitForFinished();
+
+    // Then a newer backup straight from the phone, under another name
+    phone.emplace_back(at(2), u"Modjo/Modjo/Chillin'.mp3"_s);
+    const auto result
+        = desktop.importFile(writeFile(u"second.zip"_s, namidaBackup(phone)), u"Pixel"_s, m_library).result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.devices, QStringList{u"Phone"_s});
+
+    const auto sources = desktop.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).listens, 2);
+}
+
+TEST_F(PlayHistoryImportTest, ImportingUnderTheNameOfAMergedDeviceGoesToTheOneItWasMergedInto)
+{
+    PlayHistory history{m_pool};
+
+    history
+        .importFile(writeFile(u"a.zip"_s, namidaBackup({{at(1), u"Kiesza/Hideaway/Hideaway.mp3"_s}})), u"Phone"_s,
+                    m_library)
+        .waitForFinished();
+    history
+        .importFile(writeFile(u"b.zip"_s, namidaBackup({{at(5), u"Modjo/Modjo/Chillin'.mp3"_s}})), u"Pixel"_s,
+                    m_library)
+        .waitForFinished();
+
+    auto sources = history.sources().result();
+    ASSERT_EQ(sources.size(), 3U);
+    ASSERT_TRUE(history.mergeSource(sources.at(2).id, sources.at(1).id).result());
+
+    // A backup with nothing in common with what's here, under the old name
+    const auto result
+        = history
+              .importFile(writeFile(u"c.zip"_s, namidaBackup({{at(9), u"Frizk/Forgotten Arcade/Flashback.mp3"_s}})),
+                          u"Pixel"_s, m_library)
+              .result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.devices, QStringList{u"Phone"_s});
+
+    sources = history.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).listens, 3);
+
+    // And the name isn't given to a new device either
+    PlayHistoryDatabase database;
+    database.initialise(DbConnectionProvider{m_pool});
+    EXPECT_EQ(database.findOrAddNamidaSource(u"Pixel"_s), sources.at(1).id);
+}
+
+TEST_F(PlayHistoryImportTest, TellsALargeExportFromHowItStarts)
+{
+    QJsonArray listens;
+    for(int i{0}; i < 1000; ++i) {
+        listens.append(exportedListen(at(1) + i, 0, u"fooyin:laptop"_s));
+    }
+    const QByteArray data = fooyinExport({}, listens);
+    ASSERT_GT(data.size(), 64 * 1024);
+
+    EXPECT_EQ(PlayHistory::fileFormat(writeFile(u"large.json"_s, data)), PlayHistoryFormat::Fooyin);
+    // Only the start is looked at, so a file that merely starts like one is found out when it's imported
+    const QString truncated = writeFile(u"truncated.json"_s, data.left(20 * 1024));
+    EXPECT_EQ(PlayHistory::fileFormat(truncated), PlayHistoryFormat::Fooyin);
+
+    PlayHistory history{m_pool};
+    EXPECT_FALSE(history.importFile(truncated, {}, m_library).result().succeeded());
+    EXPECT_EQ(history.importFile(writeFile(u"large2.json"_s, data), {}, m_library).result().added, 1000);
 }
 } // namespace Fooyin::Testing
