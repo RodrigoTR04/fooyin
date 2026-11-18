@@ -94,6 +94,8 @@ fooyin_add_test(test_playlistnavigator core/playback/playlistnavigatortest.cpp)
 
 fooyin_add_test(test_playhistory core/playhistory/playhistorytest.cpp ${CMAKE_SOURCE_DIR}/data/data.qrc)
 fooyin_add_test(test_playhistorystats core/playhistory/playhistorystatstest.cpp)
+fooyin_add_test(test_playhistoryimport core/playhistory/playhistoryimporttest.cpp ${CMAKE_SOURCE_DIR}/data/data.qrc)
+target_link_libraries(test_playhistoryimport PRIVATE ZLIB::ZLIB)
 
 fooyin_add_test(test_cueparser core/playlist/cueparsertest.cpp data/playlists.qrc)
 fooyin_add_test(test_m3uparser core/playlist/m3uparsertest.cpp data/playlists.qrc)

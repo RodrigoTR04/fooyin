@@ -27,6 +27,9 @@ class ActionManager;
 class Application;
 class CoverRepository;
 class ChartsDialog;
+class ListeningHistoryDevicesDialog;
+class MusicLibrary;
+class PlayHistory;
 class StatisticsService;
 class YearInReviewDialog;
 
@@ -42,9 +45,13 @@ public:
 
 private:
     void showCharts();
+    void showDevices();
 
+    PlayHistory* m_history;
+    MusicLibrary* m_library;
     StatisticsService* m_service;
     QPointer<ChartsDialog> m_chartsDialog;
     QPointer<YearInReviewDialog> m_yearDialog;
+    QPointer<ListeningHistoryDevicesDialog> m_devicesDialog;
 };
 } // namespace Fooyin

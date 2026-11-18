@@ -43,7 +43,7 @@
 
 using namespace Qt::StringLiterals;
 
-constexpr auto CurrentSchemaVersion = 26;
+constexpr auto CurrentSchemaVersion = 27;
 
 namespace Fooyin::Testing {
 namespace {
