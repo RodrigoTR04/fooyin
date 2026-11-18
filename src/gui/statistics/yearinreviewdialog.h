@@ -108,10 +108,17 @@ private:
     std::vector<int> m_yearOrder;
     std::vector<QWidget*> m_pages;
     QString m_topTrack;
+    //! The year chosen, whose pages may still be on their way.
     int m_year;
+    //! The year the pages being shown are for, or 0 if there are none.
+    int m_pagesYear;
     int m_pendingYear;
     int m_requestId;
+    //! Identifies the latest summary asked for, so that an earlier one arriving after it isn't shown.
+    int m_summaryId;
     int m_cardWidth;
+    //! The page to go back to once the year it was shown for has been rebuilt.
+    int m_restoreYear;
     int m_restorePage;
 };
 } // namespace Fooyin

@@ -33,6 +33,8 @@ public:
     [[nodiscard]] bool contains(const QString& origin, qint64 timestamp) const;
     //! The device the listen from @p origin at @p timestamp came from, or -1 if there isn't one.
     [[nodiscard]] int sourceOf(const QString& origin, qint64 timestamp) const;
+    //! The imported fooyin device holding listens from each origin, the first if there's more than one.
+    [[nodiscard]] QHash<QString, int> originSources(bool* ok = nullptr) const;
     //! The tracks of the listens from @p origin at @p timestamp.
     [[nodiscard]] QStringList hashesAt(const QString& origin, qint64 timestamp) const;
 
@@ -56,6 +58,12 @@ public:
     //! The devices listens have been recorded on, starting with this one.
     //! Sets @p ok to whether they could all be read.
     [[nodiscard]] std::vector<PlayHistorySource> sources(bool* ok = nullptr) const;
+    //! The devices that were merged into others, by the id of the device each was merged into.
+    //! Sets @p ok to whether they could all be read.
+    [[nodiscard]] QHash<int, std::vector<PlayHistorySource>> mergedSources(bool* ok = nullptr) const;
+    //! Remembers that the device of @p kind identified by @p deviceId is the one with @p into, unless it's already
+    //! known. Returns false on error.
+    bool addMergedSource(const QString& kind, const QString& deviceId, const QString& name, int into) const;
     //! The id of the device of @p kind identified by @p deviceId, or 0 if there isn't one.
     [[nodiscard]] int findSource(const QString& kind, const QString& deviceId) const;
     //! The id of the device of @p kind identified by @p deviceId, which is added as @p name if it's new. 0 on error.
@@ -70,6 +78,7 @@ public:
     //! Moves the listens of the device with @p from to the one with @p into, which has to be of the same kind, and
     //! remembers that it's the same device for later imports.
     bool mergeSource(int from, int into) const;
+    //! Removes the device with @p id and its listens. If @p id is 0, only the listens recorded here are removed.
     bool removeSource(int id) const;
 };
 } // namespace Fooyin

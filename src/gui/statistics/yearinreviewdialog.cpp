@@ -156,9 +156,12 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
     , m_nextButton{new QToolButton(this)}
     , m_reloadTimer{new QTimer(this)}
     , m_year{0}
+    , m_pagesYear{0}
     , m_pendingYear{0}
     , m_requestId{0}
+    , m_summaryId{0}
     , m_cardWidth{0}
+    , m_restoreYear{0}
     , m_restorePage{-1}
 {
     setWindowTitle(tr("Year in review"));
@@ -223,7 +226,7 @@ YearInReviewDialog::YearInReviewDialog(StatisticsService* service, QWidget* pare
 
 void YearInReviewDialog::showYear(int year)
 {
-    if(m_summary.isEmpty()) {
+    if(m_summary.isEmpty() || m_yearOrder.empty()) {
         // Still loading
         m_pendingYear = year;
         return;
@@ -262,7 +265,12 @@ void YearInReviewDialog::loadSummary()
     m_service->refreshLibraryInfo();
     showMessage(tr("Loading…"));
 
-    m_service->summary().then(this, [this](const PlayHistorySummary& summary) { applySummary(summary); });
+    const int id = ++m_summaryId;
+    m_service->summary().then(this, [this, id](const PlayHistorySummary& summary) {
+        if(id == m_summaryId) {
+            applySummary(summary);
+        }
+    });
 }
 
 void YearInReviewDialog::reloadSummary()
@@ -270,11 +278,19 @@ void YearInReviewDialog::reloadSummary()
     // The library may have changed too, and what's shown about it has to agree with the listens
     m_service->refreshLibraryInfo();
 
-    m_service->summary().then(this, [this](const PlayHistorySummary& summary) {
+    const int id = ++m_summaryId;
+    m_service->summary().then(this, [this, id](const PlayHistorySummary& summary) {
+        if(id != m_summaryId) {
+            return;
+        }
+
         // Stay on the year and page being shown when the new listens arrive, not when they were asked for, as it may
-        // have been changed since
-        m_pendingYear = m_year;
-        m_restorePage = m_stack->currentIndex();
+        // have been changed since. Until a year is shown, the one asked for is still waiting to be.
+        if(m_year != 0) {
+            m_pendingYear = m_year;
+        }
+        m_restoreYear = m_pagesYear;
+        m_restorePage = m_pagesYear != 0 ? m_stack->currentIndex() : -1;
         applySummary(summary);
     });
 }
@@ -283,7 +299,15 @@ void YearInReviewDialog::applySummary(const PlayHistorySummary& summary)
 {
     m_summary = summary;
 
-    if(summary.isEmpty()) {
+    // A summary with listens but no years to show them under has nothing to show either
+    if(summary.isEmpty() || summary.years.empty()) {
+        m_summary = {};
+        // The history may have been cleared while a year was shown, so neither it nor one being loaded can stay
+        ++m_requestId;
+        m_year        = 0;
+        m_restorePage = -1;
+        m_yearOrder.clear();
+        m_years->setItems({});
         showMessage(tr("There's no listening history yet.\n\nFooyin now records every track you listen to, so "
                        "your year in review will appear here as you play music."));
         return;
@@ -348,6 +372,7 @@ void YearInReviewDialog::clearPages()
         delete page;
     }
     m_pages.clear();
+    m_pagesYear = 0;
 }
 
 void YearInReviewDialog::addPage(QWidget* content)
@@ -370,6 +395,7 @@ void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
     m_topTrack = stats.topTracks.empty() ? QString{} : stats.topTracks.front().hash;
     refreshTint();
 
+    m_pagesYear = year;
     addPage(introPage(year, stats));
     if(!stats.topTracks.empty()) {
         addPage(topTracksPage(stats));
@@ -397,7 +423,8 @@ void YearInReviewDialog::buildPages(int year, const PlayHistoryStats& stats,
     m_dots->setCount(static_cast<int>(m_pages.size()));
     m_exportButton->setEnabled(true);
 
-    const int page = std::exchange(m_restorePage, -1);
+    const int page = year == m_restoreYear ? std::exchange(m_restorePage, -1) : -1;
+    m_restorePage  = -1;
     goToPage(page >= 0 && page < static_cast<int>(m_pages.size()) ? page : 0);
 }
 
@@ -458,11 +485,13 @@ void YearInReviewDialog::exportCurrent()
         return;
     }
 
+    // The pages may be rebuilt while the file dialog is open, so the picture is taken first
+    const QPixmap image       = grabPage(index);
     const QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
-                              + u"/fooyin-%1-%2.png"_s.arg(m_year).arg(index + 1);
+                              + u"/fooyin-%1-%2.png"_s.arg(m_pagesYear).arg(index + 1);
     const QString path = QFileDialog::getSaveFileName(this, tr("Export image"), defaultPath, tr("PNG images (*.png)"));
     if(!path.isEmpty()) {
-        grabPage(index).save(path, "PNG");
+        image.save(path, "PNG");
     }
 }
 
@@ -472,17 +501,24 @@ void YearInReviewDialog::exportAll()
         return;
     }
 
+    // The pages may be rebuilt while the file dialog is open, so the pictures are taken first
+    const int year     = m_pagesYear;
+    const int original = m_stack->currentIndex();
+    std::vector<QPixmap> images;
+    for(int i{0}; i < static_cast<int>(m_pages.size()); ++i) {
+        images.push_back(grabPage(i));
+    }
+    goToPage(original);
+
     const QString directory = QFileDialog::getExistingDirectory(
         this, tr("Export images"), QStandardPaths::writableLocation(QStandardPaths::PicturesLocation));
     if(directory.isEmpty()) {
         return;
     }
 
-    const int original = m_stack->currentIndex();
-    for(int i{0}; i < static_cast<int>(m_pages.size()); ++i) {
-        grabPage(i).save(directory + u"/fooyin-%1-%2.png"_s.arg(m_year).arg(i + 1), "PNG");
+    for(size_t i{0}; i < images.size(); ++i) {
+        images.at(i).save(directory + u"/fooyin-%1-%2.png"_s.arg(year).arg(i + 1), "PNG");
     }
-    goToPage(original);
 }
 
 QWidget* YearInReviewDialog::introPage(int year, const PlayHistoryStats& stats)

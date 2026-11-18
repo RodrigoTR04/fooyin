@@ -37,6 +37,7 @@ pacman -Syu --needed --noconfirm \
     opusfile \
     pipewire-audio \
     pipewire-jack \
+    plasma-integration \
     qcoro \
     qt6-base \
     qt6-imageformats \

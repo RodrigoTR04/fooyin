@@ -33,10 +33,12 @@
 #include <QLoggingCategory>
 #include <QPointer>
 #include <QSaveFile>
+#include <QSet>
 #include <QThread>
 #include <QtConcurrentRun>
 
 #include <array>
+#include <optional>
 
 using namespace Qt::StringLiterals;
 
@@ -186,6 +188,33 @@ Fooyin::PlayHistoryImportResult importNamida(const Fooyin::PlayHistoryDatabase& 
     return result;
 }
 
+//! A device here that listens in an imported file go to.
+struct ImportDestination
+{
+    //! 0 until the device is here.
+    int id{0};
+    //! What the device is added as if it isn't here yet.
+    Fooyin::PlayHistoryImport::ExportedSource device;
+    //! Installations that are part of the device, to be remembered as such once it's here.
+    std::vector<Fooyin::PlayHistoryImport::ExportedAlias> aliases;
+    //! Whether any of the listens in the file go to it.
+    bool used{false};
+};
+
+//! Remembers the installations that are part of @p destination, so that their own history goes to it when imported
+//! later on. Returns false on error.
+bool rememberAliases(const Fooyin::PlayHistoryDatabase& database, ImportDestination& destination)
+{
+    for(const auto& alias : destination.aliases) {
+        if(!database.addMergedSource(QLatin1String{Fooyin::PlayHistoryImport::FooyinKind}, alias.deviceId, alias.name,
+                                     destination.id)) {
+            return false;
+        }
+    }
+    destination.aliases.clear();
+    return true;
+}
+
 Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& database, const QString& filepath)
 {
     using namespace Fooyin;
@@ -217,39 +246,168 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
 
     // The listens of each device in the file. The file has been checked to describe every device it has listens of
     QHash<int, PlayHistoryImport::ExportedSource> fileSources;
+    QSet<int> fooyinSources;
     for(const auto& source : history->sources) {
         fileSources.insert(source.id, source);
+        if(source.kind == fooyinKind) {
+            fooyinSources.insert(source.id);
+        }
     }
-    QHash<int, std::vector<const PlayHistoryEntry*>> listensBySource;
+
+    QSet<QString> fooyinOrigins;
+    QHash<int, std::vector<const PlayHistoryEntry*>> namidaListens;
     for(const auto& entry : history->listens) {
-        listensBySource[entry.source].push_back(&entry);
+        if(fooyinSources.contains(entry.source)) {
+            fooyinOrigins.insert(entry.origin);
+        }
+        else {
+            namidaListens[entry.source].push_back(&entry);
+        }
     }
 
-    // Which device here each device in the file is: this one, one it was imported as before, or, if any of its listens
-    // are already here, whichever device they're from. Namida doesn't identify the device, so each installation that
-    // imports a phone gives it an id of its own, and a phone that comes by way of another installation is recognised by
-    // the listens it has in common with the one here. That holds however either has been named. A device that isn't
-    // here yet is only added once it has listens to show for it
-    QHash<int, int> resolved;
-    QSet<int> seen;
-    for(auto it = listensBySource.cbegin(); it != listensBySource.cend(); ++it) {
-        const auto& source = fileSources.value(it.key());
+    // Where the listens in the file go. Those of a fooyin installation go to the device here that already has them,
+    // which is the one it was imported as or merged into before, or whichever has any of its listens. That holds even
+    // if the file groups installations differently, so an installation's listens are never split between two devices
+    // here. Failing that, they go with the installations the file has as the same device. Namida doesn't identify the
+    // device, so each installation that imports a phone gives it an id of its own, and a phone that comes by way of
+    // another installation is recognised by the listens it has in common with the one here, however either has been
+    // named. A device that isn't here yet is only added once it has listens to show for it
+    std::vector<ImportDestination> destinations;
+    QHash<QString, size_t> byOrigin;
+    QHash<int, size_t> byNamidaDevice;
+    QHash<int, size_t> byId;
 
-        int id = source.kind == fooyinKind && source.deviceId == deviceId
-                   ? 0
-                   : database.findSource(source.kind, source.deviceId);
-        if(id == 0 && source.deviceId != deviceId) {
-            for(const PlayHistoryEntry* entry : it.value()) {
-                if(const int existing = database.sourceOf(entry->origin, entry->timestamp); existing > 0) {
-                    id = existing;
-                    break;
+    const auto existingDestination = [&](int id) {
+        if(const auto it = byId.constFind(id); it != byId.cend()) {
+            return it.value();
+        }
+        destinations.push_back({.id = id, .device = {}, .aliases = {}, .used = false});
+        byId.insert(id, destinations.size() - 1);
+        return destinations.size() - 1;
+    };
+    const auto route = [&](const QString& installation, size_t destination) {
+        const QString origin = PlayHistoryImport::fooyinOrigin(installation);
+        byOrigin.insert(origin, destination);
+        destinations[destination].used = destinations[destination].used || fooyinOrigins.contains(origin);
+    };
+
+    // The device here with the listens of an installation, if any. One that has them without knowing the installation
+    // is told it's part of it, so that its listens go to it whenever they're imported. Returns -1 on error
+    bool originsRead{false};
+    const auto originSources = database.originSources(&originsRead);
+    if(!originsRead) {
+        result.error = databaseError();
+        return result;
+    }
+    const auto ownerOf = [&](const PlayHistoryImport::ExportedAlias& installation) {
+        if(const int id = database.findSource(fooyinKind, installation.deviceId); id != 0) {
+            return id;
+        }
+        const int owner = originSources.value(PlayHistoryImport::fooyinOrigin(installation.deviceId));
+        if(owner <= 0) {
+            return 0;
+        }
+        return database.addMergedSource(fooyinKind, installation.deviceId, installation.name, owner) ? owner : -1;
+    };
+
+    for(const auto& source : std::as_const(fileSources)) {
+        if(source.kind != fooyinKind) {
+            if(!namidaListens.contains(source.id)) {
+                continue;
+            }
+            int id = database.findSource(source.kind, source.deviceId);
+            if(id == 0) {
+                for(const PlayHistoryEntry* entry : namidaListens.value(source.id)) {
+                    if(const int existing = database.sourceOf(entry->origin, entry->timestamp); existing > 0) {
+                        id = existing;
+                        break;
+                    }
                 }
+            }
+            destinations.push_back({.id = id, .device = source, .aliases = {}, .used = true});
+            byNamidaDevice.insert(source.id, destinations.size() - 1);
+            continue;
+        }
+
+        // Every installation that's part of this device, other than this one, whose listens are ours again
+        std::vector<PlayHistoryImport::ExportedAlias> installations;
+        if(source.deviceId != deviceId) {
+            installations.push_back({.deviceId = source.deviceId, .name = source.name});
+        }
+        for(const auto& alias : source.aliases) {
+            if(alias.deviceId != deviceId) {
+                installations.push_back(alias);
             }
         }
 
-        resolved.insert(it.key(), id);
-        if(id != 0) {
-            seen.insert(id);
+        // An installation that was merged into this one elsewhere is a device of its own here, as this one can't be
+        // merged into another
+        if(source.deviceId == deviceId) {
+            for(const auto& installation : installations) {
+                const int owner = ownerOf(installation);
+                if(owner < 0) {
+                    result.error = databaseError();
+                    return result;
+                }
+                if(owner != 0) {
+                    route(installation.deviceId, existingDestination(owner));
+                    continue;
+                }
+                destinations.push_back({.id      = 0,
+                                        .device  = {.id       = 0,
+                                                    .kind     = fooyinKind,
+                                                    .deviceId = installation.deviceId,
+                                                    .name     = installation.name,
+                                                    .aliases  = {}},
+                                        .aliases = {},
+                                        .used    = false});
+                route(installation.deviceId, destinations.size() - 1);
+            }
+            continue;
+        }
+
+        std::vector<int> owners;
+        for(const auto& installation : installations) {
+            owners.push_back(ownerOf(installation));
+            if(owners.back() < 0) {
+                result.error = databaseError();
+                return result;
+            }
+        }
+
+        // The device itself if it's here, or else whichever of its installations is
+        const auto known = std::ranges::find_if(owners, [](int owner) { return owner != 0; });
+        destinations.push_back(
+            {.id = known != owners.end() ? *known : 0, .device = source, .aliases = {}, .used = false});
+        const size_t group = destinations.size() - 1;
+
+        for(size_t i{0}; i < installations.size(); ++i) {
+            const auto& installation = installations.at(i);
+            if(owners.at(i) != 0) {
+                route(installation.deviceId,
+                      owners.at(i) == destinations.at(group).id ? group : existingDestination(owners.at(i)));
+                continue;
+            }
+
+            route(installation.deviceId, group);
+            // The device is added as itself if it's new, but the rest are remembered as part of it
+            if(installation.deviceId != source.deviceId || destinations.at(group).id != 0) {
+                destinations[group].aliases.push_back(installation);
+            }
+        }
+    }
+
+    QSet<int> seen;
+    for(auto& destination : destinations) {
+        if(destination.id == 0) {
+            continue;
+        }
+        if(!rememberAliases(database, destination)) {
+            result.error = databaseError();
+            return result;
+        }
+        if(destination.used) {
+            seen.insert(destination.id);
         }
     }
 
@@ -271,8 +429,12 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
             ++end;
         }
 
-        // As with Namida backups, more than one listen at the same time from the same place is told apart by its track
+        // As with Namida backups, more than one listen at the same time from the same place is told apart by its track.
+        // Listens recorded here may also have been kept with this installation's origin rather than none
         QStringList existing = database.hashesAt(entries.at(first).origin, entries.at(first).timestamp);
+        if(entries.at(first).origin.isEmpty()) {
+            existing.append(database.hashesAt(localOrigin, entries.at(first).timestamp));
+        }
         if(end - first <= static_cast<size_t>(existing.size())) {
             result.duplicates += static_cast<int>(end - first);
             first = end;
@@ -290,21 +452,36 @@ Fooyin::PlayHistoryImportResult importFooyin(const Fooyin::PlayHistoryDatabase& 
             }
             handled.append(entry.hash);
 
-            const auto& fileSource = fileSources.value(entry.source);
             if(entry.origin.isEmpty()) {
                 entry.source = 0;
             }
             else {
-                int& id = resolved[entry.source];
-                if(id == 0) {
-                    id = database.findOrAddSource(fileSource.kind, fileSource.deviceId, fileSource.name);
-                    if(id == 0) {
+                // Namida listens all have the same origin, so they go by device
+                std::optional<size_t> index;
+                if(fooyinSources.contains(entry.source)) {
+                    if(const auto it = byOrigin.constFind(entry.origin); it != byOrigin.cend()) {
+                        index = it.value();
+                    }
+                }
+                else if(const auto it = byNamidaDevice.constFind(entry.source); it != byNamidaDevice.cend()) {
+                    index = it.value();
+                }
+                if(!index) {
+                    result.error = databaseError();
+                    return result;
+                }
+
+                ImportDestination& destination = destinations[*index];
+                if(destination.id == 0) {
+                    destination.id = database.findOrAddSource(destination.device.kind, destination.device.deviceId,
+                                                              destination.device.name);
+                    if(destination.id == 0 || !rememberAliases(database, destination)) {
                         result.error = databaseError();
                         return result;
                     }
-                    seen.insert(id);
+                    seen.insert(destination.id);
                 }
-                entry.source = id;
+                entry.source = destination.id;
             }
 
             if(!database.insert(entry)) {
@@ -530,6 +707,9 @@ QFuture<PlayHistoryImportResult> PlayHistory::importFile(const QString& filepath
             if(result.added > 0 && self) {
                 QMetaObject::invokeMethod(self, &PlayHistory::historyChanged, Qt::QueuedConnection);
             }
+            else if(result.succeeded() && self) {
+                QMetaObject::invokeMethod(self, &PlayHistory::sourcesChanged, Qt::QueuedConnection);
+            }
             if(!result.succeeded()) {
                 qCWarning(PLAY_HISTORY) << "Could not import" << filepath << ":" << result.error;
             }
@@ -563,11 +743,18 @@ QFuture<QString> PlayHistory::exportFile(const QString& filepath) const
 
         // An export that's missing anything mustn't take the place of one that isn't
         bool sourcesRead{false};
+        bool mergedRead{false};
         bool listensRead{false};
 
-        for(const auto& source : database.sources(&sourcesRead)) {
-            history.sources.push_back(
-                {.id = source.id, .kind = source.kind, .deviceId = source.deviceId, .name = source.name});
+        const QString fooyinKind = QLatin1String{PlayHistoryImport::FooyinKind};
+        const auto sources       = database.sources(&sourcesRead);
+        const auto merged        = database.mergedSources(&mergedRead);
+        for(const auto& source : sources) {
+            history.sources.push_back({.id       = source.id,
+                                       .kind     = source.kind,
+                                       .deviceId = source.deviceId,
+                                       .name     = source.name,
+                                       .aliases  = {}});
         }
 
         // Where each listen was recorded goes with it, so that wherever it ends up it's only ever counted once
@@ -579,7 +766,77 @@ QFuture<QString> PlayHistory::exportFile(const QString& filepath) const
             }
         }
 
-        if(!sourcesRead || !listensRead || !transaction.commit()) {
+        // Installations merged into a device keep their own origin, so the device has to say which they are for its
+        // listens to be accepted as its own. Each installation can only be part of one device in the file, which is
+        // the device that is that installation, or else the one it was merged into, or else the first fooyin device
+        // with any of its listens, such as by an import from before installations were remembered that way. Any of its
+        // listens held by another device go with the rest of them, and those held by no fooyin device here go to a
+        // device of its own in the file
+        QHash<int, size_t> sourceIndex;
+        QSet<int> namidaSources;
+        QHash<QString, int> owners;
+        int nextId{1};
+        for(size_t i{0}; i < history.sources.size(); ++i) {
+            const auto& source = history.sources.at(i);
+            nextId             = std::max(nextId, source.id + 1);
+            if(source.kind == fooyinKind) {
+                sourceIndex.insert(source.id, i);
+                owners.insert(source.deviceId, source.id);
+            }
+            else {
+                namidaSources.insert(source.id);
+            }
+        }
+        const auto addInstallation = [&](int id, const QString& installation, const QString& name) {
+            if(owners.contains(installation)) {
+                return;
+            }
+            owners.insert(installation, id);
+            history.sources[sourceIndex.value(id)].aliases.push_back({.deviceId = installation, .name = name});
+        };
+        for(const auto& [id, aliases] : merged.asKeyValueRange()) {
+            if(id != 0 && sourceIndex.contains(id)) {
+                for(const auto& alias : aliases) {
+                    addInstallation(id, alias.deviceId, alias.name);
+                }
+            }
+        }
+
+        // A device of its own mustn't take the id of one that's gone but still has listens, or they'd be taken as its
+        for(const auto& entry : history.listens) {
+            nextId = std::max(nextId, entry.source + 1);
+        }
+
+        const QString fooyinPrefix = PlayHistoryImport::fooyinOrigin({});
+        for(auto& entry : history.listens) {
+            if(!entry.origin.startsWith(fooyinPrefix)) {
+                // Only a Namida device can have Namida's listens, and there's no telling which one a stray one is from
+                if(entry.origin != QLatin1String{PlayHistoryImport::NamidaOrigin}
+                   || !namidaSources.contains(entry.source)) {
+                    return tr("The listening history has listens that don't say where they were recorded.");
+                }
+                continue;
+            }
+
+            const QString installation = entry.origin.mid(fooyinPrefix.size());
+            if(!owners.contains(installation)) {
+                if(entry.source != 0 && sourceIndex.contains(entry.source)) {
+                    addInstallation(entry.source, installation, {});
+                }
+                else {
+                    history.sources.push_back({.id       = nextId,
+                                               .kind     = fooyinKind,
+                                               .deviceId = installation,
+                                               .name     = tr("Unknown device"),
+                                               .aliases  = {}});
+                    sourceIndex.insert(nextId, history.sources.size() - 1);
+                    owners.insert(installation, nextId++);
+                }
+            }
+            entry.source = owners.value(installation);
+        }
+
+        if(!sourcesRead || !mergedRead || !listensRead || !transaction.commit()) {
             return tr("The listening history could not be read from the database.");
         }
 

@@ -149,6 +149,30 @@ int PlayHistoryDatabase::sourceOf(const QString& origin, qint64 timestamp) const
     return query.exec() && query.next() ? query.value(0).toInt() : -1;
 }
 
+QHash<QString, int> PlayHistoryDatabase::originSources(bool* ok) const
+{
+    QHash<QString, int> sources;
+
+    // In one pass, as there's no index of origins to look each of them up by
+    QSqlQuery query{db()};
+    bool succeeded = query.prepare(u"SELECT History.Origin, MIN(History.SourceID) FROM PlayHistory AS History "
+                                   "JOIN PlayHistorySources AS Sources ON Sources.SourceID = History.SourceID "
+                                   "WHERE Sources.Kind = :kind AND Sources.MergedInto = 0 GROUP BY History.Origin;"_s);
+    query.bindValue(u":kind"_s, QLatin1String{PlayHistoryImport::FooyinKind});
+    succeeded = succeeded && query.exec();
+    if(succeeded) {
+        while(query.next()) {
+            sources.insert(query.value(0).toString(), query.value(1).toInt());
+        }
+        succeeded = !query.lastError().isValid();
+    }
+
+    if(ok) {
+        *ok = succeeded;
+    }
+    return sources;
+}
+
 QStringList PlayHistoryDatabase::hashesAt(const QString& origin, qint64 timestamp) const
 {
     static const QString statement
@@ -261,6 +285,9 @@ PlayHistorySummary PlayHistoryDatabase::summary() const
 {
     PlayHistorySummary summary;
 
+    // Read together, so that listens recorded or removed meanwhile can't leave the count disagreeing with the years
+    DbTransaction transaction{db()};
+
     {
         DbQuery query{db(), u"SELECT COUNT(*), MIN(Timestamp), MAX(Timestamp) FROM PlayHistory;"_s};
         if(query.exec() && query.next()) {
@@ -294,6 +321,7 @@ PlayHistorySummary PlayHistoryDatabase::summary() const
         }
     }
 
+    transaction.commit();
     return summary;
 }
 
@@ -425,6 +453,48 @@ std::vector<PlayHistorySource> PlayHistoryDatabase::sources(bool* ok) const
         *ok = succeeded && counted && !query.lastError().isValid() && !local.deviceId.isEmpty();
     }
     return sources;
+}
+
+QHash<int, std::vector<PlayHistorySource>> PlayHistoryDatabase::mergedSources(bool* ok) const
+{
+    QHash<int, std::vector<PlayHistorySource>> merged;
+
+    QSqlQuery query{db()};
+    bool succeeded = query.prepare(u"SELECT SourceID, Kind, DeviceID, Name, MergedInto FROM PlayHistorySources "
+                                   "WHERE MergedInto != 0 ORDER BY SourceID;"_s)
+                  && query.exec();
+    if(succeeded) {
+        while(query.next()) {
+            PlayHistorySource source;
+            source.id       = query.value(0).toInt();
+            source.kind     = query.value(1).toString();
+            source.deviceId = query.value(2).toString();
+            source.name     = query.value(3).toString();
+            merged[query.value(4).toInt()].push_back(source);
+        }
+        succeeded = !query.lastError().isValid();
+    }
+
+    if(ok) {
+        *ok = succeeded;
+    }
+    return merged;
+}
+
+bool PlayHistoryDatabase::addMergedSource(const QString& kind, const QString& deviceId, const QString& name,
+                                          int into) const
+{
+    if(findSource(kind, deviceId) != 0) {
+        return true;
+    }
+
+    DbQuery query{db(), u"INSERT INTO PlayHistorySources (Kind, DeviceID, Name, MergedInto) VALUES (:kind, :device, "
+                        ":name, :into);"_s};
+    query.bindValue(u":kind"_s, kind);
+    query.bindValue(u":device"_s, deviceId);
+    query.bindValue(u":name"_s, name);
+    query.bindValue(u":into"_s, into);
+    return query.exec();
 }
 
 int PlayHistoryDatabase::findSource(const QString& kind, const QString& deviceId) const
@@ -569,7 +639,9 @@ bool PlayHistoryDatabase::mergeSource(int from, int into) const
 bool PlayHistoryDatabase::removeSource(int id) const
 {
     if(id == 0) {
-        return false;
+        // This device isn't stored as a source, so only its listens go
+        DbQuery listens{db(), u"DELETE FROM PlayHistory WHERE SourceID = 0;"_s};
+        return listens.exec();
     }
 
     DbTransaction transaction{db()};

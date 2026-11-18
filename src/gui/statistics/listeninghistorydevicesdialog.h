@@ -23,6 +23,7 @@
 
 class QPushButton;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace Fooyin {
 class MusicLibrary;
@@ -50,6 +51,8 @@ public:
 
 private:
     void reload();
+    //! The device that's selected, or nullptr if none is.
+    [[nodiscard]] QTreeWidgetItem* selectedDevice() const;
     void updateButtons();
     void renameSelected();
     void mergeSelected();
@@ -61,5 +64,7 @@ private:
     QPushButton* m_rename;
     QPushButton* m_merge;
     QPushButton* m_remove;
+    //! Identifies the latest reload, so that an earlier one finishing after it can't show what it read.
+    int m_reloadId;
 };
 } // namespace Fooyin
