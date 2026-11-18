@@ -315,7 +315,11 @@ set(SOURCES
     playback/playlistnavigator.h
     playback/trackplaybacksettings.h
     playhistory/playhistory.cpp
+    playhistory/playhistoryimport.cpp
+    playhistory/playhistoryimport.h
     playhistory/playhistorystats.cpp
+    playhistory/zipreader.cpp
+    playhistory/zipreader.h
     playlist/parsers/cueparser.cpp
     playlist/parsers/cueparser.h
     playlist/parsers/m3uparser.cpp

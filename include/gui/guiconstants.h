@@ -283,6 +283,9 @@ constexpr auto LookupMetadataByDiscToc   = "Tracks.LookupMetadataByDiscToc";
 constexpr auto LookupMetadataById        = "Tracks.LookupMetadataById";
 constexpr auto ListeningCharts           = "Statistics.ListeningCharts";
 constexpr auto YearInReview              = "Statistics.YearInReview";
+constexpr auto ImportListeningHistory    = "Statistics.ImportListeningHistory";
+constexpr auto ExportListeningHistory    = "Statistics.ExportListeningHistory";
+constexpr auto ListeningHistoryDevices   = "Statistics.ListeningHistoryDevices";
 } // namespace Actions
 
 namespace Mime {

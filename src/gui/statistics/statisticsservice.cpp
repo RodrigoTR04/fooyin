@@ -36,6 +36,7 @@ StatisticsService::StatisticsService(PlayHistory* history, MusicLibrary* library
     , m_art{new StatsArt(covers, this)}
 {
     QObject::connect(m_history, &PlayHistory::playRecorded, this, &StatisticsService::historyChanged);
+    QObject::connect(m_history, &PlayHistory::historyChanged, this, &StatisticsService::historyChanged);
 }
 
 void StatisticsService::refreshLibraryInfo()

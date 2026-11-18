@@ -67,6 +67,11 @@ struct FYCORE_EXPORT PlayHistoryEntry
     //! The position in the track, in milliseconds, when the listen was counted. This differs from countedAfter when
     //! part of the track was skipped. -1 when unknown.
     qint64 countedAt{-1};
+    //! The device the listen was imported from (see PlayHistorySource), or 0 if it was recorded here.
+    int source{0};
+    //! Where the listen was recorded, which together with the timestamp identifies it on every device it's imported
+    //! to. Empty for listens recorded here.
+    QString origin;
 
     //! Identifies the album this entry belongs to, or an empty string when it has no album.
     [[nodiscard]] QString albumKey() const;
@@ -113,6 +118,68 @@ struct FYCORE_EXPORT PlayHistorySummary
     }
 };
 
+//! A device that listens in the history were recorded on.
+struct FYCORE_EXPORT PlayHistorySource
+{
+    //! 0 for this device.
+    int id{0};
+    //! The app the listens were recorded with: "fooyin" or "namida".
+    QString kind;
+    QString deviceId;
+    QString name;
+    int listens{0};
+    qint64 firstListen{0};
+    qint64 lastListen{0};
+    //! When history was last imported from this device, or 0 if it never was.
+    qint64 lastImported{0};
+
+    [[nodiscard]] bool isLocal() const
+    {
+        return id == 0;
+    }
+};
+
+enum class PlayHistoryFormat : uint8_t
+{
+    Unknown,
+    //! A listening history exported by fooyin.
+    Fooyin,
+    //! A backup made by Namida, or the history files in one.
+    Namida,
+};
+
+enum class PlayHistoryRenameResult : uint8_t
+{
+    Renamed,
+    //! Another Namida device already has the name. They're told apart by name, so two can't share one.
+    NameTaken,
+    Failed,
+};
+
+struct FYCORE_EXPORT PlayHistoryImportResult
+{
+    //! Why nothing was imported, or empty if the import succeeded.
+    QString error;
+    //! The devices that listens were imported from.
+    QStringList devices;
+    //! Listens added to the history.
+    int added{0};
+    //! Listens skipped because they had already been imported.
+    int duplicates{0};
+    //! Listens skipped because the track couldn't be found in the library. They're imported if the file is imported
+    //! again once the track is in the library.
+    int unmatched{0};
+    //! The files that unmatched listens were of.
+    QStringList unmatchedTracks;
+    //! Listens skipped because the file had them down with an impossible time or length.
+    int invalid{0};
+
+    [[nodiscard]] bool succeeded() const
+    {
+        return error.isEmpty();
+    }
+};
+
 /*!
  * Records each counted listen so that statistics can be derived from them.
  *
@@ -143,8 +210,38 @@ public:
     [[nodiscard]] QFuture<PlayHistoryData> load(qint64 from, qint64 to) const;
     [[nodiscard]] QFuture<PlayHistorySummary> summary() const;
 
+    //! The devices listens have been recorded on, starting with this one.
+    [[nodiscard]] QFuture<std::vector<PlayHistorySource>> sources() const;
+    //! Renames the device with @p id, which is this one if @p id is 0.
+    QFuture<PlayHistoryRenameResult> renameSource(int id, const QString& name);
+    //! Removes the device with @p id, which can't be this one, along with every listen imported from it.
+    QFuture<bool> removeSource(int id);
+    /*!
+     * Merges the device with @p from into the one with @p into, which has to be of the same kind, for when they turn
+     * out to be the same device. History imported from either later on goes to @p into.
+     */
+    QFuture<bool> mergeSource(int from, int into);
+
+    //! What kind of history the file at @p filepath holds.
+    [[nodiscard]] static PlayHistoryFormat fileFormat(const QString& filepath);
+
+    /*!
+     * Adds the listens in the file at @p filepath to the history, skipping any that were imported before so that
+     * importing a newer export from the same device only adds what's new.
+     *
+     * Listens exported by fooyin say which device they were recorded on. Namida's don't, so they're attributed to
+     * the device named @p namidaDevice, and matched to the tracks in @p libraryTracks by their path on the phone.
+     */
+    QFuture<PlayHistoryImportResult> importFile(const QString& filepath, const QString& namidaDevice,
+                                                const TrackList& libraryTracks);
+    //! Writes the whole history, including what was imported from other devices, to @p filepath. Returns an error
+    //! message, or an empty string if it was written.
+    [[nodiscard]] QFuture<QString> exportFile(const QString& filepath) const;
+
 Q_SIGNALS:
     void playRecorded();
+    //! Emitted when listens have been imported or removed.
+    void historyChanged();
 
 private:
     DbConnectionPoolPtr m_dbPool;

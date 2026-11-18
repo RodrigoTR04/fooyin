@@ -72,7 +72,7 @@ public:
                                                     bool monthlyTop = false) const;
 
 Q_SIGNALS:
-    //! Emitted when a listen has been added to the history.
+    //! Emitted when listens have been added to the history, or removed from it.
     void historyChanged();
 
 private:

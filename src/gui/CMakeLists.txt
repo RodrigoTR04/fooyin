@@ -647,6 +647,8 @@ set(SOURCES
     splitters/splitterwidget.h
     statistics/chartsdialog.cpp
     statistics/chartsdialog.h
+    statistics/listeninghistorydevicesdialog.cpp
+    statistics/listeninghistorydevicesdialog.h
     statistics/statisticsservice.cpp
     statistics/statisticsservice.h
     statistics/statsart.cpp

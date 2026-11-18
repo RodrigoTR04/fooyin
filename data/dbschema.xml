@@ -543,4 +543,26 @@
             ALTER TABLE PlayHistory ADD COLUMN CountedAt INTEGER DEFAULT -1;
         </sql>
     </revision>
+    <revision version="27">
+        <description>
+            Record which device each listen in the play history came from, so history can be imported from other
+            devices without counting a listen more than once.
+        </description>
+        <sql>
+            CREATE TABLE IF NOT EXISTS PlayHistorySources (
+                SourceID INTEGER PRIMARY KEY AUTOINCREMENT,
+                Kind TEXT NOT NULL,
+                DeviceID TEXT NOT NULL,
+                Name TEXT,
+                LastImported INTEGER DEFAULT 0,
+                MergedInto INTEGER DEFAULT 0,
+                UNIQUE(Kind, DeviceID)
+            );
+
+            ALTER TABLE PlayHistory ADD COLUMN SourceID INTEGER DEFAULT 0;
+            ALTER TABLE PlayHistory ADD COLUMN Origin TEXT DEFAULT '';
+
+            CREATE INDEX IF NOT EXISTS PlayHistorySourceIndex ON PlayHistory(SourceID);
+        </sql>
+    </revision>
 </schema>
