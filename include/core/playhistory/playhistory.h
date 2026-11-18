@@ -214,7 +214,8 @@ public:
     [[nodiscard]] QFuture<std::vector<PlayHistorySource>> sources() const;
     //! Renames the device with @p id, which is this one if @p id is 0.
     QFuture<PlayHistoryRenameResult> renameSource(int id, const QString& name);
-    //! Removes the device with @p id, which can't be this one, along with every listen imported from it.
+    //! Removes the device with @p id along with every listen imported from it. If @p id is 0, this device is kept but
+    //! every listen recorded on it is removed.
     QFuture<bool> removeSource(int id);
     /*!
      * Merges the device with @p from into the one with @p into, which has to be of the same kind, for when they turn
@@ -242,6 +243,8 @@ Q_SIGNALS:
     void playRecorded();
     //! Emitted when listens have been imported or removed.
     void historyChanged();
+    //! Emitted when an import had no new listens, though what's known about the devices may still have changed.
+    void sourcesChanged();
 
 private:
     DbConnectionPoolPtr m_dbPool;

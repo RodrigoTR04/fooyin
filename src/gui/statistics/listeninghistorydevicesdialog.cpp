@@ -237,6 +237,7 @@ ListeningHistoryDevicesDialog::ListeningHistoryDevicesDialog(PlayHistory* histor
     , m_rename{new QPushButton(tr("&Rename…"), this)}
     , m_merge{new QPushButton(tr("Mer&ge into…"), this)}
     , m_remove{new QPushButton(tr("Re&move…"), this)}
+    , m_reloadId{0}
 {
     setWindowTitle(tr("Listening History Devices"));
 
@@ -291,6 +292,7 @@ ListeningHistoryDevicesDialog::ListeningHistoryDevicesDialog(PlayHistory* histor
                      &ListeningHistoryDevicesDialog::updateButtons);
     QObject::connect(m_devices, &QTreeWidget::itemDoubleClicked, this, &ListeningHistoryDevicesDialog::renameSelected);
     QObject::connect(m_history, &PlayHistory::historyChanged, this, &ListeningHistoryDevicesDialog::reload);
+    QObject::connect(m_history, &PlayHistory::sourcesChanged, this, &ListeningHistoryDevicesDialog::reload);
     QObject::connect(m_history, &PlayHistory::playRecorded, this, &ListeningHistoryDevicesDialog::reload);
 
     updateButtons();
@@ -304,8 +306,22 @@ QSize ListeningHistoryDevicesDialog::sizeHint() const
 
 void ListeningHistoryDevicesDialog::reload()
 {
-    m_history->sources().then(this, [this](const std::vector<PlayHistorySource>& sources) {
-        const QVariant selected = m_devices->currentItem() ? m_devices->currentItem()->data(Device, SourceIdRole) : 0;
+    const int id = ++m_reloadId;
+
+    m_history->sources().then(this, [this, id](const std::vector<PlayHistorySource>& sources) {
+        if(id != m_reloadId) {
+            return;
+        }
+
+        // This device is selected when the list is first shown, and afterwards whichever was selected stays so
+        const auto* selectedItem = selectedDevice();
+        QVariant selected;
+        if(selectedItem) {
+            selected = selectedItem->data(Device, SourceIdRole);
+        }
+        else if(m_devices->topLevelItemCount() == 0) {
+            selected = 0;
+        }
 
         m_devices->clear();
 
@@ -325,7 +341,7 @@ void ListeningHistoryDevicesDialog::reload()
             item->setData(Device, ListensRole, source.listens);
             item->setData(Device, KindRole, source.kind);
 
-            if(source.id == selected.toInt()) {
+            if(selected.isValid() && source.id == selected.toInt()) {
                 m_devices->setCurrentItem(item);
             }
         }
@@ -334,18 +350,28 @@ void ListeningHistoryDevicesDialog::reload()
     });
 }
 
+QTreeWidgetItem* ListeningHistoryDevicesDialog::selectedDevice() const
+{
+    // The current item stays when it's deselected, such as by Ctrl-clicking it, so it isn't necessarily selected
+    const auto selected = m_devices->selectedItems();
+    return selected.isEmpty() ? nullptr : selected.constFirst();
+}
+
 void ListeningHistoryDevicesDialog::updateButtons()
 {
-    const auto* item = m_devices->currentItem();
+    const auto* item = selectedDevice();
     m_rename->setEnabled(item != nullptr);
-    const bool imported = item != nullptr && item->data(Device, SourceIdRole).toInt() != 0;
-    m_remove->setEnabled(imported);
+    const bool local    = item != nullptr && item->data(Device, SourceIdRole).toInt() == 0;
+    const bool imported = item != nullptr && !local;
+    // This device can't be removed, but the listens recorded on it can be cleared
+    m_remove->setText(local ? tr("C&lear…") : tr("Re&move…"));
+    m_remove->setEnabled(imported || (local && item->data(Device, ListensRole).toInt() > 0));
     m_merge->setEnabled(imported && !mergeTargets(m_devices, item).isEmpty());
 }
 
 void ListeningHistoryDevicesDialog::renameSelected()
 {
-    const auto* item = m_devices->currentItem();
+    const auto* item = selectedDevice();
     if(!item) {
         return;
     }
@@ -380,7 +406,7 @@ void ListeningHistoryDevicesDialog::renameSelected()
 
 void ListeningHistoryDevicesDialog::mergeSelected()
 {
-    const auto* item = m_devices->currentItem();
+    const auto* item = selectedDevice();
     if(!item || item->data(Device, SourceIdRole).toInt() == 0) {
         return;
     }
@@ -390,10 +416,16 @@ void ListeningHistoryDevicesDialog::mergeSelected()
         return;
     }
 
+    // The list can be reloaded while the choice is being made, such as when a listen is recorded, so nothing is read
+    // from it afterwards
+    const int from = item->data(Device, SourceIdRole).toInt();
+    QList<int> targetIds;
+
     // Merging can't be undone, and names aren't always unique, such as two installations on computers with the same
     // name, so each choice has to say which device it is
     QStringList labels;
     for(const auto* target : targets) {
+        targetIds.append(target->data(Device, SourceIdRole).toInt());
         QString label
             = tr("%1 (%2, %n listen(s) since %3)", nullptr, target->data(Device, ListensRole).toInt())
                   .arg(target->data(Device, NameRole).toString(), target->text(App), target->text(FirstListen));
@@ -418,27 +450,47 @@ void ListeningHistoryDevicesDialog::mergeSelected()
         return;
     }
 
-    const int from = item->data(Device, SourceIdRole).toInt();
-    const int into = targets.at(index)->data(Device, SourceIdRole).toInt();
+    const int into = targetIds.at(index);
 
+    // Once merged, historyChanged() brings the list up to date
     m_history->mergeSource(from, into).then(this, [this](bool merged) {
         if(!merged) {
             QMessageBox::warning(this, tr("Merge Device"), tr("The devices could not be merged."));
+            reload();
         }
-        reload();
     });
 }
 
 void ListeningHistoryDevicesDialog::removeSelected()
 {
-    const auto* item = m_devices->currentItem();
-    if(!item || item->data(Device, SourceIdRole).toInt() == 0) {
+    const auto* item = selectedDevice();
+    if(!item) {
         return;
     }
 
     const int id       = item->data(Device, SourceIdRole).toInt();
     const int listens  = item->data(Device, ListensRole).toInt();
     const QString name = item->data(Device, NameRole).toString();
+
+    if(id == 0) {
+        const auto answer = QMessageBox::warning(
+            this, tr("Clear Listening History"),
+            tr("Clear the %n listen(s) recorded on this device? Listens imported from other devices are kept.\n\nThis "
+               "can't be undone, so export the listening history first to keep a copy.",
+               nullptr, listens),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+        if(answer == QMessageBox::Yes) {
+            m_history->removeSource(id).then(this, [this](bool cleared) {
+                if(!cleared) {
+                    QMessageBox::warning(this, tr("Clear Listening History"),
+                                         tr("The listening history could not be cleared."));
+                    reload();
+                }
+            });
+        }
+        return;
+    }
 
     const auto answer = QMessageBox::question(
         this, tr("Remove Device"),
@@ -449,7 +501,12 @@ void ListeningHistoryDevicesDialog::removeSelected()
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
     if(answer == QMessageBox::Yes) {
-        m_history->removeSource(id).then(this, [this](bool) { reload(); });
+        m_history->removeSource(id).then(this, [this](bool removed) {
+            if(!removed) {
+                QMessageBox::warning(this, tr("Remove Device"), tr("The device could not be removed."));
+                reload();
+            }
+        });
     }
 }
 } // namespace Fooyin

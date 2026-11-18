@@ -55,7 +55,16 @@ export APPDIR ARCH OUTPATH OUTNAME VERSION DESKTOP ICON UPINFO
 export DEPLOY_PIPEWIRE=1
 export QT_QPA_PLATFORM=offscreen
 
-"$QUICK_SHARUN" /usr/bin/fooyin /usr/lib/fooyin/plugins
+# The Plasma platform theme (plasma-integration) brings in KDE's file dialog, which lists nothing without the KIO worker
+# for local files. quick-sharun only deploys KIO workers for binaries that link KIO directly, so it's passed explicitly
+QT_PLUGIN_DIR="$(qtpaths6 --query QT_INSTALL_PLUGINS 2>/dev/null || echo /usr/lib/qt6/plugins)"
+KIO_FILE_WORKER="$QT_PLUGIN_DIR/kf6/kio/kio_file.so"
+if [[ ! -f "$KIO_FILE_WORKER" ]]; then
+    echo "KIO file worker not found at $KIO_FILE_WORKER" >&2
+    exit 1
+fi
+
+"$QUICK_SHARUN" /usr/bin/fooyin /usr/lib/fooyin/plugins "$KIO_FILE_WORKER"
 "$QUICK_SHARUN" --make-appimage
 (
     cd "$BUILD_DIR"

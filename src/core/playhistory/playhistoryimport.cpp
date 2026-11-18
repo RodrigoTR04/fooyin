@@ -37,8 +37,11 @@
 using namespace Qt::StringLiterals;
 
 namespace {
-constexpr auto FormatName   = "fooyin-listening-history";
-constexpr int FormatVersion = 1;
+constexpr auto FormatName = "fooyin-listening-history";
+//! The newest version of the format that can be read. Version 2 adds the installations merged into each device.
+constexpr int FormatVersion = 2;
+//! Exports without merged installations are written as version 1, as fooyin versions that only know it can read them.
+constexpr int BaseFormatVersion = 1;
 //! How much of a file is read to tell what kind of history it holds.
 constexpr qint64 SniffSize = 16 * 1024;
 //! How deep to look for the history inside a backup. Namida's backup is a zip of zips.
@@ -330,8 +333,11 @@ std::expected<FooyinExport, QString> readFooyin(const QString& filepath)
     // with who recorded what, which once imported couldn't be put right by importing a better file, as it would then
     // be a duplicate
     QHash<int, ExportedSource> sources;
-    sources.insert(
-        0, {.id = 0, .kind = QLatin1String{FooyinKind}, .deviceId = history.deviceId, .name = history.deviceName});
+    sources.insert(0, {.id       = 0,
+                       .kind     = QLatin1String{FooyinKind},
+                       .deviceId = history.deviceId,
+                       .name     = history.deviceName,
+                       .aliases  = {}});
 
     bool exporterListed{false};
     const QJsonArray sourceArray = root.value("sources"_L1).toArray();
@@ -349,6 +355,23 @@ std::expected<FooyinExport, QString> readFooyin(const QString& filepath)
         if(!id || !known || source.deviceId.isEmpty()) {
             return std::unexpected{damaged};
         }
+
+        // Only fooyin installations have origins of their own to keep once merged, and this one can't be merged
+        const QJsonValue aliases = object.value("aliases"_L1);
+        if(!aliases.isUndefined()) {
+            if(!aliases.isArray() || source.kind != QLatin1String{FooyinKind} || source.id == 0) {
+                return std::unexpected{damaged};
+            }
+            for(const auto& aliasValue : aliases.toArray()) {
+                const QJsonObject alias = aliasValue.toObject();
+                ExportedAlias exportedAlias{.deviceId = alias.value("device"_L1).toString(),
+                                            .name     = alias.value("name"_L1).toString()};
+                if(exportedAlias.deviceId.isEmpty()) {
+                    return std::unexpected{damaged};
+                }
+                source.aliases.push_back(std::move(exportedAlias));
+            }
+        }
         if(source.id == 0) {
             if(source.kind != QLatin1String{FooyinKind} || source.deviceId != history.deviceId || exporterListed) {
                 return std::unexpected{damaged};
@@ -361,6 +384,26 @@ std::expected<FooyinExport, QString> readFooyin(const QString& filepath)
             return std::unexpected{damaged};
         }
         sources.insert(source.id, source);
+    }
+
+    // Each installation is a device of its own or part of one, never both, so every origin belongs to a single device
+    QHash<QString, int> origins;
+    for(const auto& source : std::as_const(sources)) {
+        if(source.kind != QLatin1String{FooyinKind}) {
+            continue;
+        }
+        if(origins.contains(fooyinOrigin(source.deviceId))) {
+            return std::unexpected{damaged};
+        }
+        origins.insert(fooyinOrigin(source.deviceId), source.id);
+    }
+    for(const auto& source : std::as_const(sources)) {
+        for(const auto& alias : source.aliases) {
+            if(origins.contains(fooyinOrigin(alias.deviceId))) {
+                return std::unexpected{damaged};
+            }
+            origins.insert(fooyinOrigin(alias.deviceId), source.id);
+        }
     }
 
     for(const auto& source : std::as_const(sources)) {
@@ -388,14 +431,20 @@ std::expected<FooyinExport, QString> readFooyin(const QString& filepath)
         }
         entry.source = *source;
 
-        const ExportedSource listenSource = sources.value(entry.source);
-        const QString deviceOrigin        = listenSource.kind == QLatin1String{NamidaKind}
-                                              ? QString{QLatin1String{NamidaOrigin}}
-                                              : fooyinOrigin(listenSource.deviceId);
-        if(entry.origin.isEmpty()) {
-            entry.origin = deviceOrigin;
+        // A listen of a fooyin device may also be from one of the installations merged into it
+        const ExportedSource& listenSource = *sources.constFind(entry.source);
+        if(listenSource.kind == QLatin1String{NamidaKind}) {
+            if(entry.origin.isEmpty()) {
+                entry.origin = QLatin1String{NamidaOrigin};
+            }
+            else if(entry.origin != QLatin1String{NamidaOrigin}) {
+                return std::unexpected{damaged};
+            }
         }
-        else if(entry.origin != deviceOrigin) {
+        else if(entry.origin.isEmpty()) {
+            entry.origin = fooyinOrigin(listenSource.deviceId);
+        }
+        else if(origins.value(entry.origin, -1) != entry.source) {
             return std::unexpected{damaged};
         }
 
@@ -426,16 +475,27 @@ std::expected<FooyinExport, QString> readFooyin(const QString& filepath)
 
 QByteArray writeFooyin(const FooyinExport& history)
 {
+    const bool merged
+        = std::ranges::any_of(history.sources, [](const auto& source) { return !source.aliases.empty(); });
+
     QJsonObject root;
     root["format"_L1]   = QLatin1String{FormatName};
-    root["version"_L1]  = FormatVersion;
+    root["version"_L1]  = merged ? FormatVersion : BaseFormatVersion;
     root["exported"_L1] = history.exported;
     root["device"_L1]   = QJsonObject{{"id"_L1, history.deviceId}, {"name"_L1, history.deviceName}};
 
     QJsonArray sources;
     for(const auto& source : history.sources) {
-        sources.append(QJsonObject{
-            {"id"_L1, source.id}, {"kind"_L1, source.kind}, {"device"_L1, source.deviceId}, {"name"_L1, source.name}});
+        QJsonObject object{
+            {"id"_L1, source.id}, {"kind"_L1, source.kind}, {"device"_L1, source.deviceId}, {"name"_L1, source.name}};
+        if(!source.aliases.empty()) {
+            QJsonArray aliases;
+            for(const auto& alias : source.aliases) {
+                aliases.append(QJsonObject{{"device"_L1, alias.deviceId}, {"name"_L1, alias.name}});
+            }
+            object["aliases"_L1] = aliases;
+        }
+        sources.append(object);
     }
     root["sources"_L1] = sources;
 

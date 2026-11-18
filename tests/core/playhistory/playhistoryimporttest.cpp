@@ -44,6 +44,7 @@
 #include <zlib.h>
 
 #include <atomic>
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -297,6 +298,40 @@ protected:
     TrackList m_library;
 };
 
+//! Another fooyin installation, with a database of its own.
+struct Installation
+{
+    explicit Installation(const QString& name)
+        : pool{createDbPool(dir.filePath(u"fooyin.db"_s))}
+        , handler{pool}
+        , history{std::make_unique<PlayHistory>(pool)}
+    {
+        database.initialise(DbConnectionProvider{pool});
+        database.renameSource(0, name);
+    }
+
+    //! Exports the history to @p path, which is returned.
+    QString exportTo(const QString& path) const
+    {
+        EXPECT_EQ(history->exportFile(path).result(), QString{});
+        return path;
+    }
+
+    QTemporaryDir dir;
+    DbConnectionPoolPtr pool;
+    DbConnectionHandler handler;
+    std::unique_ptr<PlayHistory> history;
+    PlayHistoryDatabase database;
+};
+
+//! Imports @p path into @p history, expecting it to succeed.
+PlayHistoryImportResult importInto(PlayHistory& history, const QString& path, const TrackList& library)
+{
+    const auto result = history.importFile(path, {}, library).result();
+    EXPECT_TRUE(result.succeeded()) << result.error.toStdString();
+    return result;
+}
+
 TEST_F(PlayHistoryImportTest, ReadsFilesFromAZipInsideAZip)
 {
     const QByteArray inner = makeZip({{u"a.txt"_s, "first"}, {u"folder/b.txt"_s, QByteArray(10'000, 'x')}});
@@ -376,6 +411,7 @@ TEST_F(PlayHistoryImportTest, ImportingANewerNamidaBackupOnlyAddsWhatsNew)
 {
     PlayHistory history{m_pool};
     QSignalSpy changed{&history, &PlayHistory::historyChanged};
+    QSignalSpy reimported{&history, &PlayHistory::sourcesChanged};
 
     std::vector<std::pair<qint64, QString>> phone{{at(1), u"Kiesza/Hideaway/Hideaway.mp3"_s},
                                                   {at(2), u"Frizk/Forgotten Arcade/Flashback.mp3"_s},
@@ -407,6 +443,8 @@ TEST_F(PlayHistoryImportTest, ImportingANewerNamidaBackupOnlyAddsWhatsNew)
 
     QCoreApplication::processEvents();
     EXPECT_EQ(changed.count(), 2);
+    // Though the time it was last imported has changed
+    EXPECT_EQ(reimported.count(), 1);
 
     const auto entries = listens(m_pool);
     ASSERT_EQ(entries.size(), 5U);
@@ -474,12 +512,55 @@ TEST_F(PlayHistoryImportTest, KeepsTrackOfWhatEachDeviceContributed)
     EXPECT_EQ(sources.at(0).name, u"Desktop"_s);
     EXPECT_EQ(sources.at(1).name, u"Pixel"_s);
 
-    // The listens of a device can be taken out again, but not those recorded here
-    EXPECT_FALSE(history.removeSource(0).result());
+    // The listens of a device can be taken out again
     EXPECT_TRUE(history.removeSource(sources.at(1).id).result());
     sources = history.sources().result();
     ASSERT_EQ(sources.size(), 1U);
     EXPECT_EQ(listens(m_pool).size(), 1U);
+}
+
+TEST_F(PlayHistoryImportTest, ClearingThisDeviceKeepsWhatWasImported)
+{
+    PlayHistory history{m_pool};
+
+    history.recordPlay(m_library.at(0));
+    history.recordPlay(m_library.at(1));
+    history.waitForWrites();
+
+    history
+        .importFile(writeFile(u"backup.zip"_s, namidaBackup({{at(1), u"Kiesza/Hideaway/Hideaway.mp3"_s}})), u"Phone"_s,
+                    m_library)
+        .waitForFinished();
+
+    ASSERT_EQ(history.renameSource(0, u"Desktop"_s).result(), PlayHistoryRenameResult::Renamed);
+    auto sources = history.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    ASSERT_EQ(sources.at(0).listens, 2);
+    ASSERT_EQ(sources.at(1).listens, 1);
+
+    // Only the clear's own notification counts, not the import's, which is still waiting to be delivered
+    QCoreApplication::processEvents();
+    QSignalSpy changed{&history, &PlayHistory::historyChanged};
+    EXPECT_TRUE(history.removeSource(0).result());
+    QCoreApplication::processEvents();
+    EXPECT_EQ(changed.count(), 1);
+
+    // This device stays, with nothing recorded on it
+    sources = history.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_TRUE(sources.at(0).isLocal());
+    EXPECT_EQ(sources.at(0).name, u"Desktop"_s);
+    EXPECT_EQ(sources.at(0).listens, 0);
+    EXPECT_EQ(sources.at(1).listens, 1);
+
+    const auto remaining = listens(m_pool);
+    ASSERT_EQ(remaining.size(), 1U);
+    EXPECT_EQ(remaining.front().timestamp, at(1));
+
+    // Listens recorded afterwards are still recorded here
+    history.recordPlay(m_library.at(2));
+    history.waitForWrites();
+    EXPECT_EQ(history.sources().result().at(0).listens, 1);
 }
 
 TEST_F(PlayHistoryImportTest, MergesTheHistoryOfOtherFooyinInstallationsWithoutCountingAnythingTwice)
@@ -565,6 +646,459 @@ TEST_F(PlayHistoryImportTest, MergesTheHistoryOfOtherFooyinInstallationsWithoutC
     ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
     EXPECT_EQ(result.added, 0);
     EXPECT_EQ(result.duplicates, 4);
+}
+
+TEST_F(PlayHistoryImportTest, AnExportStillHoldsTheListensOfMergedInstallations)
+{
+    // Two installations that turn out to be the same computer, each with a listen of its own
+    QTemporaryDir oldDir;
+    auto oldPool = createDbPool(oldDir.filePath(u"fooyin.db"_s));
+    const DbConnectionHandler oldHandler{oldPool};
+    PlayHistory oldInstall{oldPool};
+    PlayHistoryDatabase oldDb;
+    oldDb.initialise(DbConnectionProvider{oldPool});
+    oldDb.renameSource(0, u"Old"_s);
+    ASSERT_TRUE(oldDb.insert(PlayHistoryEntry::fromTrack(m_library.at(1), at(3))));
+
+    QTemporaryDir newDir;
+    auto newPool = createDbPool(newDir.filePath(u"fooyin.db"_s));
+    const DbConnectionHandler newHandler{newPool};
+    PlayHistory newInstall{newPool};
+    PlayHistoryDatabase newDb;
+    newDb.initialise(DbConnectionProvider{newPool});
+    newDb.renameSource(0, u"New"_s);
+    ASSERT_TRUE(newDb.insert(PlayHistoryEntry::fromTrack(m_library.at(2), at(4))));
+
+    const QString oldExport = m_dir.filePath(u"old.json"_s);
+    const QString newExport = m_dir.filePath(u"new.json"_s);
+    ASSERT_EQ(oldInstall.exportFile(oldExport).result(), QString{});
+    ASSERT_EQ(newInstall.exportFile(newExport).result(), QString{});
+
+    // The desktop imports both and merges them
+    PlayHistory desktop{m_pool};
+    desktop.recordPlay(m_library.at(0));
+    desktop.waitForWrites();
+    ASSERT_TRUE(desktop.importFile(oldExport, {}, m_library).result().succeeded());
+    ASSERT_TRUE(desktop.importFile(newExport, {}, m_library).result().succeeded());
+
+    auto sources = desktop.sources().result();
+    ASSERT_EQ(sources.size(), 3U);
+    const int oldId = std::ranges::find(sources, u"Old"_s, &PlayHistorySource::name)->id;
+    const int newId = std::ranges::find(sources, u"New"_s, &PlayHistorySource::name)->id;
+    ASSERT_TRUE(desktop.mergeSource(oldId, newId).result());
+
+    // Its export can restore what's cleared from it
+    const QString desktopExport = m_dir.filePath(u"desktop.json"_s);
+    ASSERT_EQ(desktop.exportFile(desktopExport).result(), QString{});
+    ASSERT_TRUE(desktop.removeSource(0).result());
+    ASSERT_EQ(listens(m_pool).size(), 2U);
+
+    auto result = desktop.importFile(desktopExport, {}, m_library).result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.duplicates, 2);
+
+    sources = desktop.sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(0).listens, 1);
+    EXPECT_EQ(sources.at(1).id, newId);
+    EXPECT_EQ(sources.at(1).listens, 2);
+
+    // Another installation that imports the desktop's export learns that the two are the same, so the older
+    // installation's own history goes to the same device when it's imported there later on
+    QTemporaryDir laptopDir;
+    auto laptopPool = createDbPool(laptopDir.filePath(u"fooyin.db"_s));
+    const DbConnectionHandler laptopHandler{laptopPool};
+    PlayHistory laptop{laptopPool};
+
+    result = laptop.importFile(desktopExport, {}, m_library).result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.added, 3);
+
+    ASSERT_TRUE(oldDb.insert(PlayHistoryEntry::fromTrack(m_library.at(0), at(8))));
+    ASSERT_EQ(oldInstall.exportFile(oldExport).result(), QString{});
+    result = laptop.importFile(oldExport, {}, m_library).result();
+    ASSERT_TRUE(result.succeeded()) << result.error.toStdString();
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.duplicates, 1);
+    EXPECT_EQ(result.devices, QStringList{u"New"_s});
+
+    const auto laptopSources = laptop.sources().result();
+    ASSERT_EQ(laptopSources.size(), 3U);
+    const auto merged = std::ranges::find(laptopSources, u"New"_s, &PlayHistorySource::name);
+    ASSERT_NE(merged, laptopSources.end());
+    EXPECT_EQ(merged->listens, 3);
+}
+
+class MergedInstallationsTest : public PlayHistoryImportTest
+{
+protected:
+    void SetUp() override
+    {
+        PlayHistoryImportTest::SetUp();
+
+        m_old = std::make_unique<Installation>(u"Old"_s);
+        m_new = std::make_unique<Installation>(u"New"_s);
+        ASSERT_TRUE(m_old->database.insert(PlayHistoryEntry::fromTrack(m_library.at(1), at(3))));
+        ASSERT_TRUE(m_new->database.insert(PlayHistoryEntry::fromTrack(m_library.at(2), at(4))));
+
+        // The desktop has both installations' history, and knows they're the same computer
+        m_desktop = std::make_unique<Installation>(u"Desktop"_s);
+        importInto(*m_desktop->history, oldExport(), m_library);
+        importInto(*m_desktop->history, newExport(), m_library);
+        const auto sources = m_desktop->history->sources().result();
+        ASSERT_EQ(sources.size(), 3U);
+        ASSERT_TRUE(m_desktop->history
+                        ->mergeSource(std::ranges::find(sources, u"Old"_s, &PlayHistorySource::name)->id,
+                                      std::ranges::find(sources, u"New"_s, &PlayHistorySource::name)->id)
+                        .result());
+    }
+
+    [[nodiscard]] QString oldExport() const
+    {
+        return m_old->exportTo(m_dir.filePath(u"old.json"_s));
+    }
+    [[nodiscard]] QString newExport() const
+    {
+        return m_new->exportTo(m_dir.filePath(u"new.json"_s));
+    }
+    [[nodiscard]] QString desktopExport() const
+    {
+        return m_desktop->exportTo(m_dir.filePath(u"desktop.json"_s));
+    }
+
+    //! Checks that @p installation's export can be read and imported again, without anything being new to it.
+    void expectRestorable(const Installation& installation, int listens)
+    {
+        const QString path = installation.exportTo(m_dir.filePath(u"check.json"_s));
+        const auto read    = PlayHistoryImport::readFooyin(path);
+        ASSERT_TRUE(read.has_value()) << read.error().toStdString();
+        EXPECT_EQ(read->listens.size(), static_cast<size_t>(listens));
+
+        // Device ids are only ever used once
+        QSet<int> ids;
+        for(const auto& source : read->sources) {
+            EXPECT_FALSE(ids.contains(source.id));
+            ids.insert(source.id);
+        }
+
+        const auto again = importInto(*installation.history, path, m_library);
+        EXPECT_EQ(again.added, 0);
+        EXPECT_EQ(again.duplicates, listens);
+
+        Installation fresh{u"Fresh"_s};
+        EXPECT_EQ(importInto(*fresh.history, path, m_library).added, listens);
+    }
+
+    std::unique_ptr<Installation> m_old;
+    std::unique_ptr<Installation> m_new;
+    std::unique_ptr<Installation> m_desktop;
+};
+
+TEST_F(MergedInstallationsTest, AnInstallationKnownOnlyByAnotherNameGetsTheRestOfItsListens)
+{
+    // The laptop has only had the older installation's history so far
+    Installation laptop{u"Laptop"_s};
+    importInto(*laptop.history, oldExport(), m_library);
+
+    const auto result = importInto(*laptop.history, desktopExport(), m_library);
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.duplicates, 1);
+
+    // The newer installation's listen joins the older one's, as the desktop says they're the same
+    auto sources = laptop.history->sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).name, u"Old"_s);
+    EXPECT_EQ(sources.at(1).listens, 2);
+
+    expectRestorable(laptop, 2);
+
+    // And the newer installation's own history goes to it too
+    ASSERT_TRUE(m_new->database.insert(PlayHistoryEntry::fromTrack(m_library.at(0), at(9))));
+    EXPECT_EQ(importInto(*laptop.history, newExport(), m_library).added, 1);
+    sources = laptop.history->sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).listens, 3);
+}
+
+TEST_F(MergedInstallationsTest, InstallationsKeptApartHereStayApart)
+{
+    // The laptop has had both installations' history, separately
+    Installation laptop{u"Laptop"_s};
+    importInto(*laptop.history, oldExport(), m_library);
+    importInto(*laptop.history, newExport(), m_library);
+
+    // The older installation has listened to something since, which reaches the laptop by way of the desktop
+    ASSERT_TRUE(m_old->database.insert(PlayHistoryEntry::fromTrack(m_library.at(0), at(8))));
+    importInto(*m_desktop->history, oldExport(), m_library);
+
+    const auto result = importInto(*laptop.history, desktopExport(), m_library);
+    EXPECT_EQ(result.added, 1);
+
+    // Each installation's listens stay with its own device here
+    const auto sources = laptop.history->sources().result();
+    ASSERT_EQ(sources.size(), 3U);
+    EXPECT_EQ(std::ranges::find(sources, u"Old"_s, &PlayHistorySource::name)->listens, 2);
+    EXPECT_EQ(std::ranges::find(sources, u"New"_s, &PlayHistorySource::name)->listens, 1);
+
+    expectRestorable(laptop, 3);
+}
+
+TEST_F(MergedInstallationsTest, AnInstallationGivenItsOwnHistoryBackKeepsTheRestApart)
+{
+    // The newer installation is given the desktop's history, in which the older one is part of it
+    const auto result = importInto(*m_new->history, desktopExport(), m_library);
+    EXPECT_EQ(result.added, 1);
+    EXPECT_EQ(result.duplicates, 1);
+
+    // Its own listen is still its own, and the older installation's is a device of its own, as this one can't be
+    // merged into another
+    const auto sources = m_new->history->sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(0).listens, 1);
+    EXPECT_EQ(sources.at(1).name, u"Old"_s);
+    EXPECT_EQ(sources.at(1).kind, u"fooyin"_s);
+    EXPECT_EQ(sources.at(1).deviceId, m_old->database.deviceId());
+    EXPECT_EQ(sources.at(1).listens, 1);
+
+    expectRestorable(*m_new, 2);
+}
+
+TEST_F(MergedInstallationsTest, OnlyExportsWithMergedInstallationsNeedTheNewerFormat)
+{
+    const auto version = [](const QString& path) {
+        QFile file{path};
+        EXPECT_TRUE(file.open(QIODevice::ReadOnly));
+        return QJsonDocument::fromJson(file.readAll()).object().value("version"_L1).toInt();
+    };
+
+    EXPECT_EQ(version(oldExport()), 1);
+    EXPECT_EQ(version(desktopExport()), 2);
+}
+
+TEST_F(PlayHistoryImportTest, ExportsListensGivenToADeviceWithoutItBeingRemembered)
+{
+    // Imports from before installations were remembered as part of a device could leave a device with another
+    // installation's listens and nothing to say so
+    Installation laptop{u"Laptop"_s};
+    const int device = laptop.database.findOrAddSource(u"fooyin"_s, u"new-install"_s, u"New"_s);
+    ASSERT_NE(device, 0);
+
+    auto listen   = PlayHistoryEntry::fromTrack(m_library.at(0), at(2));
+    listen.source = device;
+    listen.origin = PlayHistoryImport::fooyinOrigin(u"old-install"_s);
+    ASSERT_TRUE(laptop.database.insert(listen));
+
+    const auto read = PlayHistoryImport::readFooyin(laptop.exportTo(m_dir.filePath(u"laptop.json"_s)));
+    ASSERT_TRUE(read.has_value()) << read.error().toStdString();
+    ASSERT_EQ(read->sources.size(), 2U);
+    ASSERT_EQ(read->sources.at(1).aliases.size(), 1U);
+    EXPECT_EQ(read->sources.at(1).aliases.front().deviceId, u"old-install"_s);
+}
+
+TEST_F(PlayHistoryImportTest, AnInstallationHeldByTwoDevicesIsExportedAsPartOfOne)
+{
+    // The same could leave an installation's listens with more than one device
+    Installation laptop{u"Laptop"_s};
+    const int old   = laptop.database.findOrAddSource(u"fooyin"_s, u"old-install"_s, u"Old"_s);
+    const int other = laptop.database.findOrAddSource(u"fooyin"_s, u"new-install"_s, u"New"_s);
+    ASSERT_NE(old, 0);
+    ASSERT_NE(other, 0);
+
+    const auto insert = [&](qint64 timestamp, int source, const QString& installation) {
+        auto listen   = PlayHistoryEntry::fromTrack(m_library.at(0), timestamp);
+        listen.source = source;
+        listen.origin = PlayHistoryImport::fooyinOrigin(installation);
+        ASSERT_TRUE(laptop.database.insert(listen));
+    };
+    insert(at(1), old, u"old-install"_s);
+    insert(at(2), other, u"old-install"_s);
+    insert(at(3), other, u"stray-install"_s);
+    insert(at(4), old, u"stray-install"_s);
+
+    const QString path = laptop.exportTo(m_dir.filePath(u"laptop.json"_s));
+    const auto read    = PlayHistoryImport::readFooyin(path);
+    ASSERT_TRUE(read.has_value()) << read.error().toStdString();
+    ASSERT_EQ(read->listens.size(), 4U);
+
+    // The installation's own device has all of its listens, and the rest go with whichever had them first
+    EXPECT_EQ(read->listens.at(0).source, old);
+    EXPECT_EQ(read->listens.at(1).source, old);
+    EXPECT_EQ(read->listens.at(2).source, other);
+    EXPECT_EQ(read->listens.at(3).source, other);
+    const auto otherSource = std::ranges::find(read->sources, other, &PlayHistoryImport::ExportedSource::id);
+    ASSERT_NE(otherSource, read->sources.end());
+    ASSERT_EQ(otherSource->aliases.size(), 1U);
+    EXPECT_EQ(otherSource->aliases.front().deviceId, u"stray-install"_s);
+
+    Installation fresh{u"Fresh"_s};
+    EXPECT_EQ(importInto(*fresh.history, path, m_library).added, 4);
+}
+
+TEST_F(PlayHistoryImportTest, ListensKeptWithTheWrongKindOfDeviceCanStillBeRestored)
+{
+    Installation laptop{u"Laptop"_s};
+    const int phone  = laptop.database.findOrAddNamidaSource(u"Phone"_s);
+    const int device = laptop.database.findOrAddSource(u"fooyin"_s, u"new-install"_s, u"New"_s);
+    ASSERT_NE(phone, 0);
+    ASSERT_NE(device, 0);
+
+    const auto insert = [&](qint64 timestamp, int source, const QString& origin) {
+        auto listen   = PlayHistoryEntry::fromTrack(m_library.at(0), timestamp);
+        listen.source = source;
+        listen.origin = origin;
+        ASSERT_TRUE(laptop.database.insert(listen));
+    };
+    // A phone or this device with another installation's listens, and a device with this one's own
+    insert(at(1), phone, PlayHistoryImport::fooyinOrigin(u"old-install"_s));
+    insert(at(2), 0, PlayHistoryImport::fooyinOrigin(u"other-install"_s));
+    insert(at(3), device, PlayHistoryImport::fooyinOrigin(laptop.database.deviceId()));
+    // And a device that's gone, under the id the first of those would otherwise be given in the file
+    insert(at(5), device + 1, PlayHistoryImport::fooyinOrigin(u"gone-install"_s));
+
+    const QString path = laptop.exportTo(m_dir.filePath(u"laptop.json"_s));
+    const auto read    = PlayHistoryImport::readFooyin(path);
+    ASSERT_TRUE(read.has_value()) << read.error().toStdString();
+    ASSERT_EQ(read->listens.size(), 4U);
+    EXPECT_EQ(read->listens.at(2).source, 0);
+
+    // None of which is new to it
+    const auto again = importInto(*laptop.history, path, m_library);
+    EXPECT_EQ(again.added, 0);
+    EXPECT_EQ(again.duplicates, 4);
+
+    Installation fresh{u"Fresh"_s};
+    EXPECT_EQ(importInto(*fresh.history, path, m_library).added, 4);
+    // The other installations' listens go to devices of their own, as the phone and this device can't hold them
+    const auto sources = fresh.history->sources().result();
+    ASSERT_EQ(sources.size(), 5U);
+    EXPECT_NE(fresh.database.findSource(u"fooyin"_s, u"old-install"_s), 0);
+    EXPECT_NE(fresh.database.findSource(u"fooyin"_s, u"other-install"_s), 0);
+    EXPECT_NE(fresh.database.findSource(u"fooyin"_s, u"gone-install"_s),
+              fresh.database.findSource(u"fooyin"_s, u"old-install"_s));
+
+    // A Namida listen kept with a fooyin device can't be told where it came from
+    insert(at(4), device, QString::fromLatin1(PlayHistoryImport::NamidaOrigin));
+    EXPECT_NE(laptop.history->exportFile(m_dir.filePath(u"broken.json"_s)).result(), QString{});
+}
+
+TEST_F(PlayHistoryImportTest, APhoneIsNotTakenForAnInstallationWhoseListenItHas)
+{
+    Installation desktop{u"Desktop"_s};
+    Installation old{u"Old"_s};
+    const int phone = desktop.database.findOrAddNamidaSource(u"Phone"_s);
+    ASSERT_NE(phone, 0);
+
+    auto listen   = PlayHistoryEntry::fromTrack(m_library.at(0), at(2));
+    listen.source = phone;
+    listen.origin = PlayHistoryImport::fooyinOrigin(old.database.deviceId());
+    ASSERT_TRUE(desktop.database.insert(listen));
+
+    ASSERT_TRUE(old.database.insert(PlayHistoryEntry::fromTrack(m_library.at(1), at(5))));
+    EXPECT_EQ(importInto(*desktop.history, old.exportTo(m_dir.filePath(u"old.json"_s)), m_library).added, 1);
+
+    const int device = desktop.database.findSource(u"fooyin"_s, old.database.deviceId());
+    EXPECT_NE(device, 0);
+    EXPECT_NE(device, phone);
+}
+
+TEST_F(PlayHistoryImportTest, AnInstallationsListensGoWhereTheRestOfThemAreWhateverTheirTime)
+{
+    // The desktop was given some of the old installation's listens by a device that didn't remember being part of it
+    Installation desktop{u"Desktop"_s};
+    Installation old{u"Old"_s};
+    const int device = desktop.database.findOrAddSource(u"fooyin"_s, u"new-install"_s, u"New"_s);
+    ASSERT_NE(device, 0);
+
+    const auto give = [&](qint64 timestamp, const QString& installation) {
+        auto listen   = PlayHistoryEntry::fromTrack(m_library.at(0), timestamp);
+        listen.source = device;
+        listen.origin = PlayHistoryImport::fooyinOrigin(installation);
+        ASSERT_TRUE(desktop.database.insert(listen));
+    };
+    give(at(2), old.database.deviceId());
+    give(at(3), u"other-install"_s);
+
+    // The old installation's own export has none of the listens the desktop was given
+    ASSERT_TRUE(old.database.insert(PlayHistoryEntry::fromTrack(m_library.at(1), at(5))));
+    EXPECT_EQ(importInto(*desktop.history, old.exportTo(m_dir.filePath(u"old.json"_s)), m_library).added, 1);
+    EXPECT_EQ(desktop.database.findSource(u"fooyin"_s, old.database.deviceId()), device);
+
+    // Nor does an export that has the desktop as part of the other installation, made by a device that merged them
+    const QJsonObject root{
+        {"format"_L1, "fooyin-listening-history"_L1},
+        {"version"_L1, 2},
+        {"device"_L1, QJsonObject{{"id"_L1, "laptop"_L1}, {"name"_L1, "Laptop"_L1}}},
+        {"sources"_L1, QJsonArray{QJsonObject{{"id"_L1, 1},
+                                              {"kind"_L1, "fooyin"_L1},
+                                              {"device"_L1, desktop.database.deviceId()},
+                                              {"name"_L1, "Desktop"_L1},
+                                              {"aliases"_L1, QJsonArray{QJsonObject{{"device"_L1, "other-install"_L1},
+                                                                                    {"name"_L1, "Other"_L1}}}}}}},
+        {"listens"_L1, QJsonArray{QJsonObject{{"timestamp"_L1, at(6)},
+                                              {"source"_L1, 1},
+                                              {"origin"_L1, "fooyin:other-install"_L1},
+                                              {"hash"_L1, m_library.at(2).hash()},
+                                              {"duration"_L1, 180000}}}}};
+    EXPECT_EQ(importInto(*desktop.history, writeFile(u"laptop.json"_s, QJsonDocument{root}.toJson()), m_library).added,
+              1);
+    EXPECT_EQ(desktop.database.findSource(u"fooyin"_s, u"other-install"_s), device);
+
+    const auto sources = desktop.history->sources().result();
+    ASSERT_EQ(sources.size(), 2U);
+    EXPECT_EQ(sources.at(1).listens, 4);
+}
+
+TEST_F(PlayHistoryImportTest, RejectsExportsThatMixUpMergedInstallations)
+{
+    const auto exportWith = [this](const QJsonArray& sources, const QJsonArray& listens) {
+        const QJsonObject root{{"format"_L1, "fooyin-listening-history"_L1},
+                               {"version"_L1, 1},
+                               {"device"_L1, QJsonObject{{"id"_L1, "desktop"_L1}, {"name"_L1, "Desktop"_L1}}},
+                               {"sources"_L1, sources},
+                               {"listens"_L1, listens}};
+        return writeFile(u"export.json"_s, QJsonDocument{root}.toJson());
+    };
+    const auto listen = [this](int source, const QString& origin) {
+        return QJsonObject{{"timestamp"_L1, at(1)},
+                           {"source"_L1, source},
+                           {"origin"_L1, origin},
+                           {"hash"_L1, "abc"_L1},
+                           {"duration"_L1, 180000}};
+    };
+    const QJsonObject laptop{{"id"_L1, 1},
+                             {"kind"_L1, "fooyin"_L1},
+                             {"device"_L1, "laptop"_L1},
+                             {"name"_L1, "Laptop"_L1},
+                             {"aliases"_L1, QJsonArray{QJsonObject{{"device"_L1, "old"_L1}, {"name"_L1, "Old"_L1}}}}};
+
+    // A listen from a merged installation belongs to the device it was merged into
+    auto history = PlayHistoryImport::readFooyin(exportWith({laptop}, {listen(1, u"fooyin:old"_s)}));
+    ASSERT_TRUE(history.has_value()) << history.error().toStdString();
+    ASSERT_EQ(history->sources.size(), 2U);
+    ASSERT_EQ(history->sources.at(1).aliases.size(), 1U);
+    EXPECT_EQ(history->sources.at(1).aliases.front().deviceId, u"old"_s);
+
+    // But not to any other
+    EXPECT_FALSE(PlayHistoryImport::readFooyin(exportWith({laptop}, {listen(0, u"fooyin:old"_s)})).has_value());
+
+    // Nor can an installation be part of two devices, or a device and part of another
+    QJsonObject other{laptop};
+    other["id"_L1]     = 2;
+    other["device"_L1] = "other"_L1;
+    EXPECT_FALSE(PlayHistoryImport::readFooyin(exportWith({laptop, other}, {})).has_value());
+
+    QJsonObject old{{"id"_L1, 2}, {"kind"_L1, "fooyin"_L1}, {"device"_L1, "old"_L1}, {"name"_L1, "Old"_L1}};
+    EXPECT_FALSE(PlayHistoryImport::readFooyin(exportWith({laptop, old}, {})).has_value());
+
+    QJsonObject itself{laptop};
+    itself["aliases"_L1] = QJsonArray{QJsonObject{{"device"_L1, "desktop"_L1}}};
+    EXPECT_FALSE(PlayHistoryImport::readFooyin(exportWith({itself}, {})).has_value());
+
+    // Namida doesn't identify the device, so it has nothing to merge this way
+    QJsonObject phone{laptop};
+    phone["kind"_L1] = "namida"_L1;
+    EXPECT_FALSE(PlayHistoryImport::readFooyin(exportWith({phone}, {})).has_value());
 }
 
 TEST_F(PlayHistoryImportTest, APhoneForwardedByAnotherInstallationIsTheSamePhone)
