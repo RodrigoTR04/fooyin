@@ -190,11 +190,37 @@ QStringList toStringList(const QJsonValue& value)
     return list;
 }
 
+//! @p name in a form that's the same wherever the file has been copied to. Android and Windows don't allow some
+//! characters in names, which are replaced (usually by _) when copied there, and they leave out spaces and dots at the
+//! end. An accented letter can also be written in more than one way
+QString comparableName(const QString& name)
+{
+    static const QString notAllowed = u"<>:\"|?*"_s;
+
+    QString comparable = name.normalized(QString::NormalizationForm_C).toCaseFolded();
+    for(QChar& character : comparable) {
+        if(notAllowed.contains(character)) {
+            character = u'_';
+        }
+    }
+    while(!comparable.isEmpty() && (comparable.back().isSpace() || comparable.back() == u'.')) {
+        comparable.chop(1);
+    }
+    return comparable;
+}
+
 QStringList pathParts(const QString& path)
 {
     QString normalised = path;
     normalised.replace(u'\\', u'/');
-    return normalised.toCaseFolded().split(u'/', Qt::SkipEmptyParts);
+
+    QStringList parts;
+    for(const QString& part : normalised.split(u'/', Qt::SkipEmptyParts)) {
+        if(const QString comparable = comparableName(part); !comparable.isEmpty()) {
+            parts.append(comparable);
+        }
+    }
+    return parts;
 }
 
 //! Whether @p folder (case folded) is one that many albums have, such as for each disc.

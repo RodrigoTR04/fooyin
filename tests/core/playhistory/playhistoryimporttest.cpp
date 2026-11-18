@@ -407,6 +407,35 @@ TEST_F(PlayHistoryImportTest, MatchesFilesOnAnotherDeviceToTracksInTheLibrary)
     EXPECT_EQ(matcher.match(phonePath(u"Someone Else/Other Album/Flashback.mp3"_s)), nullptr);
 }
 
+TEST_F(PlayHistoryImportTest, MatchesNamesWithCharactersThePhoneDoesNotAllow)
+{
+    TrackList library = m_library;
+    library.push_back(makeTrack(u"/home/me/Music/Tracks/Caravan Palace/<I°_°I>/Lay Down.flac"_s, u"Lay Down"_s,
+                                u"Caravan Palace"_s, u"<I°_°I>"_s));
+    library.push_back(makeTrack(u"/home/me/Music/Tracks/Arctic Monkeys/AM/Do I Wanna Know?.flac"_s,
+                                u"Do I Wanna Know?"_s, u"Arctic Monkeys"_s, u"AM"_s));
+    library.push_back(makeTrack(u"/home/me/Music/Games/ATLUS/Persona 5 Royal: Original Soundtrack/I believe.flac"_s,
+                                u"I believe"_s, u"ATLUS"_s, u"Persona 5 Royal: Original Soundtrack"_s));
+    // Written with a separate accent, as some systems store names
+    library.push_back(makeTrack(u"/home/me/Music/Tracks/Beyonce\u0301/Lemonade/Formation.flac"_s, u"Formation"_s,
+                                u"Beyoncé"_s, u"Lemonade"_s));
+    library.push_back(makeTrack(u"/home/me/Music/Tracks/Gorillaz/Strange Timez/Momentary Bliss.flac"_s,
+                                u"Momentary Bliss"_s, u"Gorillaz"_s, u"Strange Timez"_s));
+
+    const PlayHistoryImport::TrackMatcher matcher{library};
+
+    const auto titleOf = [&matcher](const QString& path) {
+        const Track* track = matcher.match(phonePath(path));
+        return track ? track->title() : QString{};
+    };
+    EXPECT_EQ(titleOf(u"Caravan Palace/_I°_°I_/Lay Down.mp3"_s), u"Lay Down"_s);
+    EXPECT_EQ(titleOf(u"Arctic Monkeys/AM/Do I Wanna Know_.mp3"_s), u"Do I Wanna Know?"_s);
+    EXPECT_EQ(titleOf(u"ATLUS/Persona 5 Royal_ Original Soundtrack/I believe.mp3"_s), u"I believe"_s);
+    EXPECT_EQ(titleOf(u"Beyonc\u00e9/Lemonade/Formation.mp3"_s), u"Formation"_s);
+    // A space at the end of a folder's name is left out on some devices but not others
+    EXPECT_EQ(titleOf(u"Gorillaz/Strange Timez /Momentary Bliss.mp3"_s), u"Momentary Bliss"_s);
+}
+
 TEST_F(PlayHistoryImportTest, ImportingANewerNamidaBackupOnlyAddsWhatsNew)
 {
     PlayHistory history{m_pool};

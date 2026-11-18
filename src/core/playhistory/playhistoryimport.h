@@ -108,8 +108,10 @@ FYCORE_EXPORT QByteArray writeFooyin(const FooyinExport& history);
  *
  * Paths on another device (e.g. /storage/emulated/0/Music/Artist/Album/Song.mp3) won't be the same as in the library,
  * so tracks are matched by file name and then by as many of the folders above it as are the same, at least one of
- * which has to be. A copy in another format (Song.flac) is matched too, but one in the same format is preferred. If
- * more than one track fits equally well, none is chosen, rather than counting the listen towards the wrong one.
+ * which has to be. A copy in another format (Song.flac) is matched too, but one in the same format is preferred. Names
+ * are compared regardless of case and of characters the other device doesn't allow in them, such as "Royal_ Original"
+ * for "Royal: Original". If more than one track fits equally well, none is chosen, rather than counting the listen
+ * towards the wrong one.
  */
 class FYCORE_EXPORT TrackMatcher
 {
